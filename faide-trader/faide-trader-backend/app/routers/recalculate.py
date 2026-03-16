@@ -50,9 +50,15 @@ async def recalculate(data: RecalculateRequest, db: AsyncSession = Depends(get_d
         # Update the specified field
         setattr(trade, data.field, data.new_value)
 
-        # If PnL is directly edited, pin the trade so cascading recalc doesn't overwrite
-        if data.field in ("pnl", "pnl_percent"):
+        # If PnL is directly edited, sync the complementary field and pin the trade
+        if data.field == "pnl":
             trade.is_pinned = True
+            notional = trade.entry_price * trade.quantity
+            trade.pnl_percent = round((trade.pnl / notional * 100) if notional > 0 else 0.0, 4)
+        elif data.field == "pnl_percent":
+            trade.is_pinned = True
+            notional = trade.entry_price * trade.quantity
+            trade.pnl = round(data.new_value / 100 * notional, 4)
 
         # Recalculate trade PnL if price/quantity/leverage changed
         from app.services.calculation_engine import calculate_trade_pnl
