@@ -1,0 +1,255 @@
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
+
+from app.database import get_db
+from app.models.portfolio import Trade, Bot, Account, PnlRecord
+from app.schemas import (
+    RecalculateRequest,
+    RecalculateResponse,
+    TradeResponse,
+    PnlRecordResponse,
+    PnlRecordUpdate,
+    StatsResponse,
+)
+from app.services.calculation_engine import (
+    recalculate_bot_from_trades,
+    recalculate_account,
+    recalculate_portfolio,
+    handle_top_down_edit,
+    calculate_stats_from_trades,
+)
+
+router = APIRouter(prefix="/api", tags=["recalculation"])
+
+
+@router.post("/recalculate", response_model=RecalculateResponse)
+async def recalculate(data: RecalculateRequest, db: AsyncSession = Depends(get_db)):
+    """
+    Trigger cascading recalculation when a value is edited.
+    Supports editing at any level: trade, bot (total_pnl), account, portfolio.
+    """
+    if data.entity_type == "trade":
+        trade = await db.get(Trade, data.entity_id)
+        if not trade:
+            raise HTTPException(status_code=404, detail="Trade not found")
+
+        # Update the specified field
+        if hasattr(trade, data.field):
+            setattr(trade, data.field, data.new_value)
+
+        # Recalculate trade PnL if price/quantity/leverage changed
+        from app.services.calculation_engine import calculate_trade_pnl
+        if data.field in ("entry_price", "exit_price", "quantity", "leverage", "fee"):
+            pnl, pnl_pct = calculate_trade_pnl(
+                trade.entry_price, trade.exit_price, trade.quantity,
+                trade.leverage, trade.direction, trade.fee,
+            )
+            if "pnl" not in data.pinned_fields:
+                trade.pnl = pnl
+            if "pnl_percent" not in data.pinned_fields:
+                trade.pnl_percent = pnl_pct
+
+        await db.flush()
+
+        # Cascade up
+        bot_stats = await recalculate_bot_from_trades(db, trade.bot_id)
+        bot = await db.get(Bot, trade.bot_id)
+        account = await db.get(Account, bot.account_id) if bot else None
+        account_stats = {}
+        if account:
+            account_stats = await recalculate_account(db, account.id)
+
+        await db.commit()
+
+        # Get updated trades
+        result = await db.execute(
+            select(Trade).where(Trade.bot_id == trade.bot_id).order_by(Trade.entry_time)
+        )
+        updated_trades = [TradeResponse.model_validate(t) for t in result.scalars().all()]
+
+        # Get updated PnL records
+        result = await db.execute(
+            select(PnlRecord).where(PnlRecord.bot_id == trade.bot_id).order_by(PnlRecord.date)
+        )
+        updated_pnl = [PnlRecordResponse.model_validate(r) for r in result.scalars().all()]
+
+        return RecalculateResponse(
+            updated_trades=updated_trades,
+            updated_pnl_records=updated_pnl,
+            bot_stats=bot_stats,
+            account_stats=account_stats,
+        )
+
+    elif data.entity_type == "bot":
+        bot = await db.get(Bot, data.entity_id)
+        if not bot:
+            raise HTTPException(status_code=404, detail="Bot not found")
+
+        if data.field == "total_pnl":
+            # Top-down: distribute new total P&L across trades
+            trades = await handle_top_down_edit(
+                db, bot.id, data.new_value, data.pinned_fields
+            )
+            bot_stats = await recalculate_bot_from_trades(db, bot.id)
+
+            account = await db.get(Account, bot.account_id)
+            account_stats = {}
+            if account:
+                account_stats = await recalculate_account(db, account.id)
+
+            await db.commit()
+
+            result = await db.execute(
+                select(Trade).where(Trade.bot_id == bot.id).order_by(Trade.entry_time)
+            )
+            updated_trades = [TradeResponse.model_validate(t) for t in result.scalars().all()]
+
+            result = await db.execute(
+                select(PnlRecord).where(PnlRecord.bot_id == bot.id).order_by(PnlRecord.date)
+            )
+            updated_pnl = [PnlRecordResponse.model_validate(r) for r in result.scalars().all()]
+
+            return RecalculateResponse(
+                updated_trades=updated_trades,
+                updated_pnl_records=updated_pnl,
+                bot_stats=bot_stats,
+                account_stats=account_stats,
+            )
+
+    elif data.entity_type == "account":
+        account = await db.get(Account, data.entity_id)
+        if not account:
+            raise HTTPException(status_code=404, detail="Account not found")
+
+        if data.field == "current_balance":
+            account.current_balance = data.new_value
+        elif data.field == "initial_balance":
+            account.initial_balance = data.new_value
+
+        account_stats = await recalculate_account(db, account.id)
+        await db.commit()
+
+        return RecalculateResponse(account_stats=account_stats)
+
+    raise HTTPException(status_code=400, detail=f"Unsupported entity_type: {data.entity_type}")
+
+
+@router.get("/bots/{bot_id}/pnl", response_model=list[PnlRecordResponse])
+async def get_pnl_records(
+    bot_id: int,
+    period: str = "daily",
+    db: AsyncSession = Depends(get_db),
+):
+    bot = await db.get(Bot, bot_id)
+    if not bot:
+        raise HTTPException(status_code=404, detail="Bot not found")
+
+    result = await db.execute(
+        select(PnlRecord)
+        .where(PnlRecord.bot_id == bot_id, PnlRecord.period_type == period)
+        .order_by(PnlRecord.date)
+    )
+    return list(result.scalars().all())
+
+
+@router.put("/pnl/{pnl_id}", response_model=PnlRecordResponse)
+async def update_pnl_record(
+    pnl_id: int,
+    data: PnlRecordUpdate,
+    db: AsyncSession = Depends(get_db),
+):
+    record = await db.get(PnlRecord, pnl_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="PnL record not found")
+
+    if data.pnl is not None:
+        record.pnl = data.pnl
+    if data.trade_count is not None:
+        record.trade_count = data.trade_count
+    if data.win_count is not None:
+        record.win_count = data.win_count
+    if data.loss_count is not None:
+        record.loss_count = data.loss_count
+    if data.is_pinned is not None:
+        record.is_pinned = data.is_pinned
+
+    # Recalculate cumulative PnL for all records in the bot
+    result = await db.execute(
+        select(PnlRecord)
+        .where(PnlRecord.bot_id == record.bot_id)
+        .order_by(PnlRecord.date)
+    )
+    records = list(result.scalars().all())
+    cumulative = 0.0
+    for r in records:
+        cumulative += r.pnl
+        r.cumulative_pnl = round(cumulative, 2)
+
+    await db.commit()
+    await db.refresh(record)
+    return record
+
+
+@router.get("/stats/portfolio/{portfolio_id}", response_model=StatsResponse)
+async def get_portfolio_stats(portfolio_id: int, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(
+        select(Account).where(Account.portfolio_id == portfolio_id)
+    )
+    accounts = list(result.scalars().all())
+
+    all_trades = []
+    total_initial = 0.0
+    for account in accounts:
+        total_initial += account.initial_balance
+        result = await db.execute(
+            select(Bot).where(Bot.account_id == account.id)
+        )
+        bots = list(result.scalars().all())
+        for bot in bots:
+            result = await db.execute(
+                select(Trade).where(Trade.bot_id == bot.id).order_by(Trade.entry_time)
+            )
+            all_trades.extend(result.scalars().all())
+
+    stats = calculate_stats_from_trades(all_trades, total_initial if total_initial > 0 else 10000.0)
+    return StatsResponse(**stats)
+
+
+@router.get("/stats/account/{account_id}", response_model=StatsResponse)
+async def get_account_stats(account_id: int, db: AsyncSession = Depends(get_db)):
+    account = await db.get(Account, account_id)
+    if not account:
+        raise HTTPException(status_code=404, detail="Account not found")
+
+    result = await db.execute(select(Bot).where(Bot.account_id == account_id))
+    bots = list(result.scalars().all())
+
+    all_trades = []
+    for bot in bots:
+        result = await db.execute(
+            select(Trade).where(Trade.bot_id == bot.id).order_by(Trade.entry_time)
+        )
+        all_trades.extend(result.scalars().all())
+
+    stats = calculate_stats_from_trades(all_trades, account.initial_balance)
+    return StatsResponse(**stats)
+
+
+@router.get("/stats/bot/{bot_id}", response_model=StatsResponse)
+async def get_bot_stats(bot_id: int, db: AsyncSession = Depends(get_db)):
+    bot = await db.get(Bot, bot_id)
+    if not bot:
+        raise HTTPException(status_code=404, detail="Bot not found")
+
+    account = await db.get(Account, bot.account_id)
+    initial_balance = account.initial_balance if account else 10000.0
+
+    result = await db.execute(
+        select(Trade).where(Trade.bot_id == bot_id).order_by(Trade.entry_time)
+    )
+    trades = list(result.scalars().all())
+
+    stats = calculate_stats_from_trades(trades, initial_balance)
+    return StatsResponse(**stats)

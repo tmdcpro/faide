@@ -1,0 +1,186 @@
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+
+async function request<T>(path: string, options?: RequestInit): Promise<T> {
+  const res = await fetch(`${API_URL}${path}`, {
+    headers: { 'Content-Type': 'application/json' },
+    ...options,
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || res.statusText);
+  }
+  return res.json();
+}
+
+// Types
+export interface Portfolio {
+  id: number;
+  name: string;
+  description: string;
+  created_at: string;
+  updated_at: string;
+  account_count: number;
+  total_pnl: number;
+  total_balance: number;
+}
+
+export interface Account {
+  id: number;
+  portfolio_id: number;
+  name: string;
+  exchange: string;
+  initial_balance: number;
+  current_balance: number;
+  created_at: string;
+  updated_at: string;
+  bot_count: number;
+  total_pnl: number;
+  total_trades: number;
+  win_rate: number;
+}
+
+export interface Bot {
+  id: number;
+  account_id: number;
+  name: string;
+  strategy_type: string;
+  symbol: string;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+  total_pnl: number;
+  total_trades: number;
+  win_count: number;
+  loss_count: number;
+  win_rate: number;
+  sharpe_ratio: number;
+  max_drawdown: number;
+  profit_factor: number;
+}
+
+export interface Trade {
+  id: number;
+  bot_id: number;
+  symbol: string;
+  direction: string;
+  status: string;
+  entry_price: number;
+  exit_price: number | null;
+  quantity: number;
+  leverage: number;
+  pnl: number;
+  pnl_percent: number;
+  fee: number;
+  entry_time: string;
+  exit_time: string | null;
+  is_pinned: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PnlRecord {
+  id: number;
+  bot_id: number;
+  date: string;
+  period_type: string;
+  pnl: number;
+  cumulative_pnl: number;
+  trade_count: number;
+  win_count: number;
+  loss_count: number;
+  is_pinned: boolean;
+}
+
+export interface Stats {
+  total_pnl: number;
+  total_trades: number;
+  win_count: number;
+  loss_count: number;
+  win_rate: number;
+  avg_win: number;
+  avg_loss: number;
+  profit_factor: number;
+  sharpe_ratio: number;
+  sortino_ratio: number;
+  max_drawdown: number;
+  max_drawdown_percent: number;
+  calmar_ratio: number;
+  avg_trade_pnl: number;
+  best_trade: number;
+  worst_trade: number;
+  total_fees: number;
+  net_pnl: number;
+  current_balance: number;
+  roi_percent: number;
+}
+
+export interface RecalculateResult {
+  updated_trades: Trade[];
+  updated_pnl_records: PnlRecord[];
+  bot_stats: Stats | null;
+  account_stats: Record<string, number> | null;
+  portfolio_stats: Record<string, number> | null;
+}
+
+// Portfolios
+export const api = {
+  // Portfolios
+  listPortfolios: () => request<Portfolio[]>('/api/portfolios'),
+  createPortfolio: (data: { name: string; description?: string }) =>
+    request<Portfolio>('/api/portfolios', { method: 'POST', body: JSON.stringify(data) }),
+  getPortfolio: (id: number) => request<Portfolio>(`/api/portfolios/${id}`),
+  updatePortfolio: (id: number, data: Partial<Portfolio>) =>
+    request<Portfolio>(`/api/portfolios/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deletePortfolio: (id: number) =>
+    request<{ status: string }>(`/api/portfolios/${id}`, { method: 'DELETE' }),
+
+  // Accounts
+  listAccounts: (portfolioId: number) =>
+    request<Account[]>(`/api/portfolios/${portfolioId}/accounts`),
+  createAccount: (portfolioId: number, data: { name: string; exchange: string; initial_balance?: number }) =>
+    request<Account>(`/api/portfolios/${portfolioId}/accounts`, { method: 'POST', body: JSON.stringify(data) }),
+  getAccount: (id: number) => request<Account>(`/api/accounts/${id}`),
+  updateAccount: (id: number, data: Partial<Account>) =>
+    request<Account>(`/api/accounts/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteAccount: (id: number) =>
+    request<{ status: string }>(`/api/accounts/${id}`, { method: 'DELETE' }),
+
+  // Bots
+  listBots: (accountId: number) => request<Bot[]>(`/api/accounts/${accountId}/bots`),
+  createBot: (accountId: number, data: { name: string; strategy_type?: string; symbol?: string }) =>
+    request<Bot>(`/api/accounts/${accountId}/bots`, { method: 'POST', body: JSON.stringify(data) }),
+  getBot: (id: number) => request<Bot>(`/api/bots/${id}`),
+  updateBot: (id: number, data: Partial<Bot>) =>
+    request<Bot>(`/api/bots/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteBot: (id: number) =>
+    request<{ status: string }>(`/api/bots/${id}`, { method: 'DELETE' }),
+
+  // Trades
+  listTrades: (botId: number) => request<Trade[]>(`/api/bots/${botId}/trades`),
+  createTrade: (botId: number, data: Omit<Trade, 'id' | 'bot_id' | 'pnl' | 'pnl_percent' | 'is_pinned' | 'created_at' | 'updated_at'>) =>
+    request<Trade>(`/api/bots/${botId}/trades`, { method: 'POST', body: JSON.stringify(data) }),
+  updateTrade: (id: number, data: Partial<Trade>) =>
+    request<Trade>(`/api/trades/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteTrade: (id: number) =>
+    request<{ status: string }>(`/api/trades/${id}`, { method: 'DELETE' }),
+
+  // PnL
+  getPnlRecords: (botId: number, period?: string) =>
+    request<PnlRecord[]>(`/api/bots/${botId}/pnl${period ? `?period=${period}` : ''}`),
+  updatePnlRecord: (id: number, data: Partial<PnlRecord>) =>
+    request<PnlRecord>(`/api/pnl/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+
+  // Recalculate
+  recalculate: (data: { entity_type: string; entity_id: number; field: string; new_value: number; pinned_fields?: string[] }) =>
+    request<RecalculateResult>('/api/recalculate', { method: 'POST', body: JSON.stringify(data) }),
+
+  // Stats
+  getPortfolioStats: (id: number) => request<Stats>(`/api/stats/portfolio/${id}`),
+  getAccountStats: (id: number) => request<Stats>(`/api/stats/account/${id}`),
+  getBotStats: (id: number) => request<Stats>(`/api/stats/bot/${id}`),
+
+  // Market Data
+  listExchanges: () => request<{ exchanges: { id: string; name: string; type: string }[] }>('/api/market-data/exchanges'),
+  importMarketData: (data: { exchange: string; symbol: string; timeframe?: string; limit?: number }) =>
+    request<{ imported: number }>('/api/market-data/import', { method: 'POST', body: JSON.stringify(data) }),
+};
