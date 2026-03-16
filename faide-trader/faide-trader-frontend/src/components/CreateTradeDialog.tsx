@@ -35,7 +35,7 @@ export function CreateTradeDialog({ botId, defaultSymbol, onClose, onCreated }: 
         direction: form.direction,
         status: form.status,
         entry_price: form.entry_price,
-        exit_price: form.exit_price || null,
+        exit_price: form.exit_price ?? null,
         quantity: form.quantity,
         leverage: form.leverage,
         fee: form.fee,

@@ -115,15 +115,17 @@ async def update_trade(
     if data.is_pinned is not None:
         trade.is_pinned = data.is_pinned
 
-    # If PnL is directly set, pin it; otherwise recalculate
+    # If PnL is directly set, pin it so cascading recalc doesn't overwrite
     if data.pnl is not None:
         trade.pnl = data.pnl
+        trade.is_pinned = True
         notional = trade.entry_price * trade.quantity
         trade.pnl_percent = round((trade.pnl / notional * 100) if notional > 0 else 0.0, 4)
     elif data.pnl_percent is not None:
         notional = trade.entry_price * trade.quantity
         trade.pnl = round(data.pnl_percent / 100 * notional, 4)
         trade.pnl_percent = data.pnl_percent
+        trade.is_pinned = True
     else:
         # Recalculate from price/quantity/leverage
         pnl, pnl_pct = calculate_trade_pnl(

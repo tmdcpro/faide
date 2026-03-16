@@ -26,6 +26,9 @@ from app.services.calculation_engine import (
     handle_period_pnl_edit,
 )
 
+# Allowlist of fields that can be edited via the recalculate endpoint
+EDITABLE_TRADE_FIELDS = {"entry_price", "exit_price", "quantity", "leverage", "fee", "pnl", "pnl_percent"}
+
 router = APIRouter(prefix="/api", tags=["recalculation"])
 
 
@@ -40,9 +43,16 @@ async def recalculate(data: RecalculateRequest, db: AsyncSession = Depends(get_d
         if not trade:
             raise HTTPException(status_code=404, detail="Trade not found")
 
+        # Validate field against allowlist
+        if data.field not in EDITABLE_TRADE_FIELDS:
+            raise HTTPException(status_code=400, detail=f"Field '{data.field}' is not editable. Allowed: {sorted(EDITABLE_TRADE_FIELDS)}")
+
         # Update the specified field
-        if hasattr(trade, data.field):
-            setattr(trade, data.field, data.new_value)
+        setattr(trade, data.field, data.new_value)
+
+        # If PnL is directly edited, pin the trade so cascading recalc doesn't overwrite
+        if data.field in ("pnl", "pnl_percent"):
+            trade.is_pinned = True
 
         # Recalculate trade PnL if price/quantity/leverage changed
         from app.services.calculation_engine import calculate_trade_pnl
