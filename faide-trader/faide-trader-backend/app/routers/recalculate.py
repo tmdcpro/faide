@@ -128,7 +128,17 @@ async def recalculate(data: RecalculateRequest, db: AsyncSession = Depends(get_d
             raise HTTPException(status_code=404, detail="Account not found")
 
         if data.field == "current_balance":
-            account.current_balance = data.new_value
+            # Back-calculate: target total PnL = new_balance - initial_balance
+            # Then distribute across all bots' trades to make accounting consistent
+            target_total_pnl = data.new_value - account.initial_balance
+            result = await db.execute(select(Bot).where(Bot.account_id == account.id))
+            bots = list(result.scalars().all())
+            if bots:
+                # Distribute target PnL proportionally across bots
+                bot_count = len(bots)
+                per_bot_pnl = target_total_pnl / bot_count
+                for bot in bots:
+                    await handle_top_down_edit(db, bot.id, per_bot_pnl, data.pinned_fields)
         elif data.field == "initial_balance":
             account.initial_balance = data.new_value
 

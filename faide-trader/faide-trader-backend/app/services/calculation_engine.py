@@ -483,13 +483,13 @@ async def handle_stat_edit(
             current_mean = float(np.mean(returns))
 
             if current_mean != 0:
-                adjustment = (target_mean - current_mean) * initial_balance
+                adjustment = (target_mean - current_mean) * initial_balance * len(trades)
                 per_trade = adjustment / len(unpinned_trades)
                 for trade in unpinned_trades:
                     trade.pnl = round(trade.pnl + per_trade, 4)
                     _back_calculate_exit_price(trade)
             else:
-                per_trade = target_mean * initial_balance / len(unpinned_trades)
+                per_trade = target_mean * initial_balance * len(trades) / len(unpinned_trades)
                 for trade in unpinned_trades:
                     trade.pnl = round(per_trade, 4)
                     _back_calculate_exit_price(trade)
