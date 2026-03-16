@@ -9,11 +9,15 @@ import {
   type PnlRecord,
 } from '@/lib/api';
 import { StatsCard } from '@/components/StatsCard';
+import { EditableStatsCard } from '@/components/EditableStatsCard';
 import { TradeTable } from '@/components/TradeTable';
 import { CreateDialog } from '@/components/CreateDialog';
 import { CreateTradeDialog } from '@/components/CreateTradeDialog';
 import { PnlChart } from '@/components/PnlChart';
+import { PeriodPnlView } from '@/components/PeriodPnlView';
 import { EditableField } from '@/components/EditableField';
+import { MarketDataImportDialog } from '@/components/MarketDataImportDialog';
+import { GenerateTradesDialog } from '@/components/GenerateTradesDialog';
 import {
   ChevronRight,
   Plus,
@@ -24,6 +28,8 @@ import {
   Bot as BotIcon,
   TrendingUp,
   RefreshCw,
+  Download,
+  Zap,
 } from 'lucide-react';
 
 type View =
@@ -42,6 +48,8 @@ function App() {
   const [pnlRecords, setPnlRecords] = useState<PnlRecord[]>([]);
   const [loading, setLoading] = useState(false);
   const [showCreate, setShowCreate] = useState<string | null>(null);
+  const [showMarketImport, setShowMarketImport] = useState(false);
+  const [showGenerateTrades, setShowGenerateTrades] = useState(false);
   const [currentPortfolio, setCurrentPortfolio] = useState<Portfolio | null>(null);
   const [currentAccount, setCurrentAccount] = useState<Account | null>(null);
   const [currentBot, setCurrentBot] = useState<Bot | null>(null);
@@ -253,7 +261,14 @@ function App() {
         </div>
       </div>
 
-      {stats && stats.total_trades > 0 && <StatsCard stats={stats} title="Portfolio Statistics" />}
+      {stats && stats.total_trades > 0 && (
+        <>
+          <StatsCard stats={stats} title="Portfolio Statistics" />
+          <div className="mt-4">
+            <PeriodPnlView entityType="portfolio" entityId={view.portfolioId} onRecalculated={loadData} />
+          </div>
+        </>
+      )}
 
       <div className="mt-6">
         <h2 className="text-lg font-semibold mb-4">Accounts</h2>
@@ -388,7 +403,14 @@ function App() {
           </div>
         </div>
 
-        {stats && stats.total_trades > 0 && <StatsCard stats={stats} title="Account Statistics" />}
+        {stats && stats.total_trades > 0 && (
+          <>
+            <StatsCard stats={stats} title="Account Statistics" />
+            <div className="mt-4">
+              <PeriodPnlView entityType="account" entityId={view.accountId} onRecalculated={loadData} />
+            </div>
+          </>
+        )}
 
         <div className="mt-6">
           <h2 className="text-lg font-semibold mb-4">Bots / Strategies</h2>
@@ -514,6 +536,12 @@ function App() {
               <RefreshCw size={16} />
             </button>
             <button
+              onClick={() => setShowGenerateTrades(true)}
+              className="flex items-center gap-2 px-4 py-2 bg-yellow-600 hover:bg-yellow-500 rounded-lg text-sm font-medium transition-colors"
+            >
+              <Zap size={16} /> Generate Trades
+            </button>
+            <button
               onClick={() => setShowCreate('trade')}
               className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded-lg text-sm font-medium transition-colors"
             >
@@ -535,30 +563,21 @@ function App() {
 
         {/* Top-level editable stats */}
         {stats && (
-          <div className="bg-slate-800 rounded-lg border border-slate-700 p-4 mb-4">
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="text-sm font-medium text-gray-400">Bot Statistics (click any value to edit)</h3>
-              <button
-                onClick={async () => {
-                  if (currentBot && stats) {
-                    const newPnl = prompt('Set total P&L for this bot:', String(stats.total_pnl));
-                    if (newPnl !== null) {
-                      await api.recalculate({
-                        entity_type: 'bot',
-                        entity_id: currentBot.id,
-                        field: 'total_pnl',
-                        new_value: parseFloat(newPnl),
-                      });
-                      loadData();
-                    }
-                  }
-                }}
-                className="text-xs text-blue-400 hover:text-blue-300 transition-colors"
-              >
-                Edit Total P&L (cascading)
-              </button>
-            </div>
-            <StatsCard stats={stats} />
+          <div className="mb-4">
+            <EditableStatsCard
+              stats={stats}
+              title="Bot Statistics"
+              entityType="bot"
+              entityId={view.botId}
+              onRecalculated={loadData}
+            />
+          </div>
+        )}
+
+        {/* Period P&L Breakdown */}
+        {stats && stats.total_trades > 0 && (
+          <div className="mb-4">
+            <PeriodPnlView entityType="bot" entityId={view.botId} onRecalculated={loadData} />
           </div>
         )}
 
@@ -588,6 +607,15 @@ function App() {
             onCreated={loadData}
           />
         )}
+
+        {showGenerateTrades && (
+          <GenerateTradesDialog
+            botId={view.botId}
+            botSymbol={currentBot?.symbol || 'BTC/USDT'}
+            onClose={() => setShowGenerateTrades(false)}
+            onGenerated={loadData}
+          />
+        )}
       </div>
     );
   };
@@ -605,9 +633,16 @@ function App() {
             <span className="text-xs text-gray-500 bg-slate-700 px-2 py-0.5 rounded">Simulator</span>
           </div>
           <div className="flex items-center gap-4 text-sm text-gray-400">
+            <button
+              onClick={() => setShowMarketImport(true)}
+              className="flex items-center gap-1 hover:text-blue-400 transition-colors"
+            >
+              <Download size={14} />
+              Import Data
+            </button>
             <span className="flex items-center gap-1">
               <BarChart3 size={14} />
-              Simulated Portfolio Manager
+              Simulator
             </span>
           </div>
         </div>
@@ -628,6 +663,13 @@ function App() {
         {view.type === 'account' && renderAccountDetail()}
         {view.type === 'bot' && renderBotDetail()}
       </main>
+
+      {showMarketImport && (
+        <MarketDataImportDialog
+          onClose={() => setShowMarketImport(false)}
+          onImported={loadData}
+        />
+      )}
     </div>
   );
 }

@@ -1,15 +1,18 @@
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.models.portfolio import Trade, Bot, Account
-from app.schemas import TradeCreate, TradeUpdate, TradeResponse
+from app.schemas import TradeCreate, TradeUpdate, TradeResponse, TradeGenerateRequest, TradeGenerateResponse
 from app.services.calculation_engine import (
     calculate_trade_pnl,
     recalculate_bot_from_trades,
     recalculate_account,
 )
+from app.services.trade_generator import generate_trades_for_bot
 
 router = APIRouter(prefix="/api", tags=["trades"])
 
@@ -147,6 +150,50 @@ async def update_trade(
     await db.commit()
     await db.refresh(trade)
     return trade
+
+
+@router.post("/bots/{bot_id}/trades/generate", response_model=TradeGenerateResponse)
+async def generate_trades(
+    bot_id: int, data: TradeGenerateRequest, db: AsyncSession = Depends(get_db)
+):
+    """Generate simulated trades for a bot within a date range."""
+    bot = await db.get(Bot, bot_id)
+    if not bot:
+        raise HTTPException(status_code=404, detail="Bot not found")
+
+    try:
+        start_dt = datetime.fromisoformat(data.start_date)
+        end_dt = datetime.fromisoformat(data.end_date)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format. Use ISO format (YYYY-MM-DD)")
+
+    if end_dt <= start_dt:
+        raise HTTPException(status_code=400, detail="end_date must be after start_date")
+
+    try:
+        trades = await generate_trades_for_bot(
+            db=db,
+            bot_id=bot_id,
+            start_date=start_dt,
+            end_date=end_dt,
+            num_trades=data.num_trades,
+            win_rate_target=data.win_rate_target,
+            avg_pnl_percent=data.avg_pnl_percent,
+            base_quantity=data.base_quantity,
+            base_leverage=data.base_leverage,
+            base_fee=data.base_fee,
+            base_price=data.base_price,
+        )
+        return TradeGenerateResponse(
+            generated=len(trades),
+            bot_id=bot_id,
+            start_date=data.start_date,
+            end_date=data.end_date,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Trade generation failed: {str(e)}")
 
 
 @router.delete("/trades/{trade_id}")

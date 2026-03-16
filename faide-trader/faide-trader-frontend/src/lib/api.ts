@@ -114,6 +114,40 @@ export interface Stats {
   roi_percent: number;
 }
 
+export interface PeriodPnl {
+  period: string;
+  period_type: string;
+  pnl: number;
+  cumulative_pnl: number;
+  trade_count: number;
+  win_count: number;
+  loss_count: number;
+  win_rate: number;
+  drawdown: number;
+  drawdown_percent: number;
+}
+
+export interface TradeGenerateRequest {
+  start_date: string;
+  end_date: string;
+  num_trades?: number;
+  win_rate_target?: number;
+  avg_pnl_percent?: number;
+  base_quantity?: number;
+  base_leverage?: number;
+  base_fee?: number;
+  base_price?: number;
+}
+
+export interface MarketDataImportRequest {
+  exchange: string;
+  symbol: string;
+  timeframe?: string;
+  since?: string;
+  end_date?: string;
+  limit?: number;
+}
+
 export interface RecalculateResult {
   updated_trades: Trade[];
   updated_pnl_records: PnlRecord[];
@@ -181,6 +215,24 @@ export const api = {
 
   // Market Data
   listExchanges: () => request<{ exchanges: { id: string; name: string; type: string }[] }>('/api/market-data/exchanges'),
-  importMarketData: (data: { exchange: string; symbol: string; timeframe?: string; limit?: number }) =>
-    request<{ imported: number }>('/api/market-data/import', { method: 'POST', body: JSON.stringify(data) }),
+  listSymbols: (exchange: string) => request<{ exchange: string; symbols: string[] }>(`/api/market-data/symbols/${exchange}`),
+  importMarketData: (data: MarketDataImportRequest) =>
+    request<{ imported: number; exchange: string; symbol: string }>('/api/market-data/import', { method: 'POST', body: JSON.stringify(data) }),
+
+  // Trade Generation
+  generateTrades: (botId: number, data: TradeGenerateRequest) =>
+    request<{ generated: number; bot_id: number }>(`/api/bots/${botId}/trades/generate`, { method: 'POST', body: JSON.stringify(data) }),
+
+  // Period P&L
+  getBotPeriodPnl: (botId: number, periodType?: string) =>
+    request<PeriodPnl[]>(`/api/bots/${botId}/period-pnl${periodType ? `?period_type=${periodType}` : ''}`),
+  getAccountPeriodPnl: (accountId: number, periodType?: string) =>
+    request<PeriodPnl[]>(`/api/accounts/${accountId}/period-pnl${periodType ? `?period_type=${periodType}` : ''}`),
+  getPortfolioPeriodPnl: (portfolioId: number, periodType?: string) =>
+    request<PeriodPnl[]>(`/api/portfolios/${portfolioId}/period-pnl${periodType ? `?period_type=${periodType}` : ''}`),
+  updatePeriodPnl: (botId: number, periodKey: string, data: { pnl?: number }, periodType?: string) =>
+    request<{ periods: PeriodPnl[]; bot_stats: Record<string, number> }>(
+      `/api/bots/${botId}/period-pnl/${periodKey}${periodType ? `?period_type=${periodType}` : ''}`,
+      { method: 'PUT', body: JSON.stringify(data) }
+    ),
 };

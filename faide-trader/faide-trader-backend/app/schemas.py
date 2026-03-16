@@ -170,12 +170,33 @@ class PnlRecordResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+# --- Trade Generation ---
+class TradeGenerateRequest(BaseModel):
+    start_date: str  # ISO date string
+    end_date: str  # ISO date string
+    num_trades: int = 50
+    win_rate_target: float = 55.0
+    avg_pnl_percent: float = 2.0
+    base_quantity: float = 0.1
+    base_leverage: float = 5.0
+    base_fee: float = 2.0
+    base_price: float = 50000.0
+
+
+class TradeGenerateResponse(BaseModel):
+    generated: int
+    bot_id: int
+    start_date: str
+    end_date: str
+
+
 # --- Market Data ---
 class MarketDataImport(BaseModel):
     exchange: str
     symbol: str
     timeframe: str = "1d"
     since: Optional[str] = None  # ISO date string
+    end_date: Optional[str] = None  # ISO date string for end of range
     limit: int = 365
 
 
@@ -203,6 +224,29 @@ class RecalculateResponse(BaseModel):
     bot_stats: Optional[dict] = None
     account_stats: Optional[dict] = None
     portfolio_stats: Optional[dict] = None
+
+
+# --- Period P&L ---
+class PeriodPnlResponse(BaseModel):
+    period: str  # e.g. "2024-01", "2024-W03", "2024-01-15"
+    period_type: str  # "monthly", "weekly", "daily"
+    pnl: float = 0.0
+    cumulative_pnl: float = 0.0
+    trade_count: int = 0
+    win_count: int = 0
+    loss_count: int = 0
+    win_rate: float = 0.0
+    drawdown: float = 0.0
+    drawdown_percent: float = 0.0
+
+    model_config = {"from_attributes": True}
+
+
+class PeriodPnlUpdate(BaseModel):
+    pnl: Optional[float] = None
+    trade_count: Optional[int] = None
+    win_count: Optional[int] = None
+    loss_count: Optional[int] = None
 
 
 # --- Stats ---

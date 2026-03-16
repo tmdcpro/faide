@@ -12,13 +12,18 @@ from app.schemas import (
     PnlRecordResponse,
     PnlRecordUpdate,
     StatsResponse,
+    PeriodPnlResponse,
+    PeriodPnlUpdate,
 )
 from app.services.calculation_engine import (
     recalculate_bot_from_trades,
     recalculate_account,
     recalculate_portfolio,
     handle_top_down_edit,
+    handle_stat_edit,
     calculate_stats_from_trades,
+    aggregate_period_pnl,
+    handle_period_pnl_edit,
 )
 
 router = APIRouter(prefix="/api", tags=["recalculation"])
@@ -87,36 +92,35 @@ async def recalculate(data: RecalculateRequest, db: AsyncSession = Depends(get_d
         if not bot:
             raise HTTPException(status_code=404, detail="Bot not found")
 
-        if data.field == "total_pnl":
-            # Top-down: distribute new total P&L across trades
-            trades = await handle_top_down_edit(
-                db, bot.id, data.new_value, data.pinned_fields
-            )
-            bot_stats = await recalculate_bot_from_trades(db, bot.id)
+        # Use handle_stat_edit for any stat field (total_pnl, win_rate, sharpe, etc.)
+        await handle_stat_edit(
+            db, bot.id, data.field, data.new_value, data.pinned_fields
+        )
+        bot_stats = await recalculate_bot_from_trades(db, bot.id)
 
-            account = await db.get(Account, bot.account_id)
-            account_stats = {}
-            if account:
-                account_stats = await recalculate_account(db, account.id)
+        account = await db.get(Account, bot.account_id)
+        account_stats = {}
+        if account:
+            account_stats = await recalculate_account(db, account.id)
 
-            await db.commit()
+        await db.commit()
 
-            result = await db.execute(
-                select(Trade).where(Trade.bot_id == bot.id).order_by(Trade.entry_time)
-            )
-            updated_trades = [TradeResponse.model_validate(t) for t in result.scalars().all()]
+        result = await db.execute(
+            select(Trade).where(Trade.bot_id == bot.id).order_by(Trade.entry_time)
+        )
+        updated_trades = [TradeResponse.model_validate(t) for t in result.scalars().all()]
 
-            result = await db.execute(
-                select(PnlRecord).where(PnlRecord.bot_id == bot.id).order_by(PnlRecord.date)
-            )
-            updated_pnl = [PnlRecordResponse.model_validate(r) for r in result.scalars().all()]
+        result = await db.execute(
+            select(PnlRecord).where(PnlRecord.bot_id == bot.id).order_by(PnlRecord.date)
+        )
+        updated_pnl = [PnlRecordResponse.model_validate(r) for r in result.scalars().all()]
 
-            return RecalculateResponse(
-                updated_trades=updated_trades,
-                updated_pnl_records=updated_pnl,
-                bot_stats=bot_stats,
-                account_stats=account_stats,
-            )
+        return RecalculateResponse(
+            updated_trades=updated_trades,
+            updated_pnl_records=updated_pnl,
+            bot_stats=bot_stats,
+            account_stats=account_stats,
+        )
 
     elif data.entity_type == "account":
         account = await db.get(Account, data.entity_id)
@@ -253,3 +257,122 @@ async def get_bot_stats(bot_id: int, db: AsyncSession = Depends(get_db)):
 
     stats = calculate_stats_from_trades(trades, initial_balance)
     return StatsResponse(**stats)
+
+
+# --- Period P&L Endpoints ---
+
+@router.get("/bots/{bot_id}/period-pnl", response_model=list[PeriodPnlResponse])
+async def get_period_pnl(
+    bot_id: int,
+    period_type: str = "monthly",
+    db: AsyncSession = Depends(get_db),
+):
+    """Get P&L broken down by period (daily/weekly/monthly) with drawdown."""
+    bot = await db.get(Bot, bot_id)
+    if not bot:
+        raise HTTPException(status_code=404, detail="Bot not found")
+
+    account = await db.get(Account, bot.account_id)
+    initial_balance = account.initial_balance if account else 10000.0
+
+    result = await db.execute(
+        select(Trade).where(Trade.bot_id == bot_id).order_by(Trade.entry_time)
+    )
+    trades = list(result.scalars().all())
+
+    periods = aggregate_period_pnl(trades, period_type, initial_balance)
+    return [PeriodPnlResponse(**p) for p in periods]
+
+
+@router.get("/accounts/{account_id}/period-pnl", response_model=list[PeriodPnlResponse])
+async def get_account_period_pnl(
+    account_id: int,
+    period_type: str = "monthly",
+    db: AsyncSession = Depends(get_db),
+):
+    """Get account-level P&L broken down by period."""
+    account = await db.get(Account, account_id)
+    if not account:
+        raise HTTPException(status_code=404, detail="Account not found")
+
+    result = await db.execute(select(Bot).where(Bot.account_id == account_id))
+    bots = list(result.scalars().all())
+
+    all_trades = []
+    for bot in bots:
+        result = await db.execute(
+            select(Trade).where(Trade.bot_id == bot.id).order_by(Trade.entry_time)
+        )
+        all_trades.extend(result.scalars().all())
+
+    all_trades.sort(key=lambda t: t.entry_time)
+    periods = aggregate_period_pnl(all_trades, period_type, account.initial_balance)
+    return [PeriodPnlResponse(**p) for p in periods]
+
+
+@router.get("/portfolios/{portfolio_id}/period-pnl", response_model=list[PeriodPnlResponse])
+async def get_portfolio_period_pnl(
+    portfolio_id: int,
+    period_type: str = "monthly",
+    db: AsyncSession = Depends(get_db),
+):
+    """Get portfolio-level P&L broken down by period."""
+    result = await db.execute(
+        select(Account).where(Account.portfolio_id == portfolio_id)
+    )
+    accounts = list(result.scalars().all())
+
+    all_trades = []
+    total_initial = 0.0
+    for account in accounts:
+        total_initial += account.initial_balance
+        result = await db.execute(select(Bot).where(Bot.account_id == account.id))
+        bots = list(result.scalars().all())
+        for bot in bots:
+            result = await db.execute(
+                select(Trade).where(Trade.bot_id == bot.id).order_by(Trade.entry_time)
+            )
+            all_trades.extend(result.scalars().all())
+
+    all_trades.sort(key=lambda t: t.entry_time)
+    periods = aggregate_period_pnl(all_trades, period_type, total_initial if total_initial > 0 else 10000.0)
+    return [PeriodPnlResponse(**p) for p in periods]
+
+
+@router.put("/bots/{bot_id}/period-pnl/{period_key}")
+async def update_period_pnl(
+    bot_id: int,
+    period_key: str,
+    data: PeriodPnlUpdate,
+    period_type: str = "monthly",
+    db: AsyncSession = Depends(get_db),
+):
+    """Edit a period's P&L and back-calculate trades to match."""
+    bot = await db.get(Bot, bot_id)
+    if not bot:
+        raise HTTPException(status_code=404, detail="Bot not found")
+
+    if data.pnl is not None:
+        await handle_period_pnl_edit(
+            db, bot_id, period_key, period_type, data.pnl, []
+        )
+
+    # Recalculate everything
+    bot_stats = await recalculate_bot_from_trades(db, bot_id)
+    account = await db.get(Account, bot.account_id)
+    if account:
+        await recalculate_account(db, account.id)
+
+    await db.commit()
+
+    # Return updated period P&L
+    account = await db.get(Account, bot.account_id)
+    initial_balance = account.initial_balance if account else 10000.0
+
+    result = await db.execute(
+        select(Trade).where(Trade.bot_id == bot_id).order_by(Trade.entry_time)
+    )
+    trades = list(result.scalars().all())
+    periods = aggregate_period_pnl(trades, period_type, initial_balance)
+
+    return {"periods": [PeriodPnlResponse(**p) for p in periods], "bot_stats": bot_stats}
