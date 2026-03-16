@@ -46,7 +46,8 @@ async def fetch_ohlcv(
             exchange.fetch_ohlcv, symbol, timeframe, since_ts, limit
         )
     finally:
-        exchange.close()
+        if hasattr(exchange, 'close'):
+            exchange.close()
 
     results = []
     for candle in ohlcv:
@@ -115,7 +116,8 @@ async def get_available_symbols(exchange_name: str) -> list[str]:
         symbols = list(exchange.symbols)
         return sorted(symbols)[:100]  # Return top 100
     finally:
-        exchange.close()
+        if hasattr(exchange, 'close'):
+            exchange.close()
 
 
 async def get_stored_ohlcv(
