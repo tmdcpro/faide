@@ -150,11 +150,29 @@ async def recalculate(data: RecalculateRequest, db: AsyncSession = Depends(get_d
             result = await db.execute(select(Bot).where(Bot.account_id == account.id))
             bots = list(result.scalars().all())
             if bots:
-                # Distribute target PnL proportionally across bots
-                bot_count = len(bots)
-                per_bot_pnl = target_total_pnl / bot_count
+                # Compute each bot's current PnL to distribute proportionally
+                bot_pnls: dict[int, float] = {}
                 for bot in bots:
-                    await handle_top_down_edit(db, bot.id, per_bot_pnl, data.pinned_fields)
+                    trade_result = await db.execute(
+                        select(Trade).where(Trade.bot_id == bot.id)
+                    )
+                    bot_trades = list(trade_result.scalars().all())
+                    bot_pnls[bot.id] = sum(t.pnl for t in bot_trades)
+
+                current_total_pnl = sum(bot_pnls.values())
+
+                if current_total_pnl != 0:
+                    # Proportional: each bot gets its share of the target
+                    for bot in bots:
+                        bot_share = bot_pnls[bot.id] / current_total_pnl
+                        await handle_top_down_edit(
+                            db, bot.id, target_total_pnl * bot_share, data.pinned_fields
+                        )
+                else:
+                    # All bots are flat — fall back to even split
+                    per_bot_pnl = target_total_pnl / len(bots)
+                    for bot in bots:
+                        await handle_top_down_edit(db, bot.id, per_bot_pnl, data.pinned_fields)
         elif data.field == "initial_balance":
             account.initial_balance = data.new_value
 
