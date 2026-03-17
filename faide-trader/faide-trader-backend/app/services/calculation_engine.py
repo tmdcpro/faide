@@ -266,7 +266,7 @@ async def recalculate_account(db: AsyncSession, account_id: int) -> dict:
 
     for bot in bots:
         bot_stats = await recalculate_bot_from_trades(db, bot.id)
-        total_pnl += bot_stats.get("total_pnl", 0.0)
+        total_pnl += bot_stats.get("net_pnl", 0.0)
         total_trades += bot_stats.get("total_trades", 0)
         total_wins += bot_stats.get("win_count", 0)
 

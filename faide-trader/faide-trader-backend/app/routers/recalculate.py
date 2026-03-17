@@ -235,10 +235,10 @@ async def update_pnl_record(
     if data.is_pinned is not None:
         record.is_pinned = data.is_pinned
 
-    # Recalculate cumulative PnL for all records in the bot
+    # Recalculate cumulative PnL for records of the same period type
     result = await db.execute(
         select(PnlRecord)
-        .where(PnlRecord.bot_id == record.bot_id)
+        .where(PnlRecord.bot_id == record.bot_id, PnlRecord.period_type == record.period_type)
         .order_by(PnlRecord.date)
     )
     records = list(result.scalars().all())
