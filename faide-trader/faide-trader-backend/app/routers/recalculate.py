@@ -164,7 +164,10 @@ async def recalculate(data: RecalculateRequest, db: AsyncSession = Depends(get_d
                 # Only distribute to bots that have unpinned trades
                 editable_bots = [b for b in bots if bot_has_editable.get(b.id, False)]
                 if not editable_bots:
-                    editable_bots = bots  # fallback: try all bots anyway
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Cannot edit current_balance because all bot trades are pinned",
+                    )
 
                 editable_pnl = sum(bot_pnls[b.id] for b in editable_bots)
                 pinned_bot_pnl = sum(bot_pnls[b.id] for b in bots if b not in editable_bots)
