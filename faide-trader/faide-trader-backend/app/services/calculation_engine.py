@@ -70,9 +70,9 @@ def calculate_stats_from_trades(trades: list[Trade], initial_balance: float = 10
     wins = [p for p in pnls if p > 0]
     losses = [p for p in pnls if p <= 0]
 
-    total_pnl = sum(pnls)
     total_fees = sum(fees)
-    net_pnl = total_pnl
+    net_pnl = sum(pnls)  # trade.pnl already includes fee deduction
+    total_pnl = net_pnl + total_fees  # gross P&L before fees
     total_trades = len(trades)
     win_count = len(wins)
     loss_count = len(losses)
@@ -82,7 +82,7 @@ def calculate_stats_from_trades(trades: list[Trade], initial_balance: float = 10
     gross_profit = sum(wins) if wins else 0.0
     gross_loss = abs(sum(losses)) if losses else 0.0
     profit_factor = (gross_profit / gross_loss) if gross_loss > 0 else float("inf") if gross_profit > 0 else 0.0
-    avg_trade_pnl = total_pnl / total_trades if total_trades > 0 else 0.0
+    avg_trade_pnl = net_pnl / total_trades if total_trades > 0 else 0.0
     best_trade = max(pnls) if pnls else 0.0
     worst_trade = min(pnls) if pnls else 0.0
     current_balance = initial_balance + net_pnl
@@ -489,9 +489,11 @@ async def handle_stat_edit(
                     trade.pnl = round(trade.pnl + per_trade, 4)
                     _back_calculate_exit_price(trade)
             else:
-                per_trade = target_mean * initial_balance * len(trades) / len(unpinned_trades)
+                # Zero-mean: shift each trade by target_mean * initial_balance
+                # while preserving relative differences to maintain volatility
+                base_shift = target_mean * initial_balance
                 for trade in unpinned_trades:
-                    trade.pnl = round(per_trade, 4)
+                    trade.pnl = round(trade.pnl + base_shift, 4)
                     _back_calculate_exit_price(trade)
 
     elif field in ("avg_win", "avg_loss"):

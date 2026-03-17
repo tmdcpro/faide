@@ -150,28 +150,37 @@ async def recalculate(data: RecalculateRequest, db: AsyncSession = Depends(get_d
             result = await db.execute(select(Bot).where(Bot.account_id == account.id))
             bots = list(result.scalars().all())
             if bots:
-                # Compute each bot's current PnL to distribute proportionally
+                # Compute each bot's current PnL and check for unpinned trades
                 bot_pnls: dict[int, float] = {}
+                bot_has_editable: dict[int, bool] = {}
                 for bot in bots:
                     trade_result = await db.execute(
                         select(Trade).where(Trade.bot_id == bot.id)
                     )
                     bot_trades = list(trade_result.scalars().all())
                     bot_pnls[bot.id] = sum(t.pnl for t in bot_trades)
+                    bot_has_editable[bot.id] = any(not t.is_pinned for t in bot_trades)
 
-                current_total_pnl = sum(bot_pnls.values())
+                # Only distribute to bots that have unpinned trades
+                editable_bots = [b for b in bots if bot_has_editable.get(b.id, False)]
+                if not editable_bots:
+                    editable_bots = bots  # fallback: try all bots anyway
 
-                if current_total_pnl != 0:
-                    # Proportional: each bot gets its share of the target
-                    for bot in bots:
-                        bot_share = bot_pnls[bot.id] / current_total_pnl
+                editable_pnl = sum(bot_pnls[b.id] for b in editable_bots)
+                pinned_bot_pnl = sum(bot_pnls[b.id] for b in bots if b not in editable_bots)
+                distributable_target = target_total_pnl - pinned_bot_pnl
+
+                if editable_pnl != 0:
+                    # Proportional: each editable bot gets its share
+                    for bot in editable_bots:
+                        bot_share = bot_pnls[bot.id] / editable_pnl
                         await handle_top_down_edit(
-                            db, bot.id, target_total_pnl * bot_share, data.pinned_fields
+                            db, bot.id, distributable_target * bot_share, data.pinned_fields
                         )
                 else:
-                    # All bots are flat — fall back to even split
-                    per_bot_pnl = target_total_pnl / len(bots)
-                    for bot in bots:
+                    # All editable bots are flat — even split
+                    per_bot_pnl = distributable_target / len(editable_bots)
+                    for bot in editable_bots:
                         await handle_top_down_edit(db, bot.id, per_bot_pnl, data.pinned_fields)
         elif data.field == "initial_balance":
             account.initial_balance = data.new_value
