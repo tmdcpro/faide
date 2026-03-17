@@ -115,6 +115,7 @@ export function SymbolSelector({
           >
             {sym}
             <button
+              type="button"
               onClick={(e) => { e.stopPropagation(); handleRemove(sym); }}
               className="hover:text-white"
             >
@@ -162,6 +163,7 @@ export function SymbolSelector({
             const isSelected = selectedSymbols.includes(sym);
             return (
               <button
+                type="button"
                 key={sym}
                 onClick={() => handleSelect(sym)}
                 className={`w-full text-left px-3 py-1.5 text-sm hover:bg-slate-600 transition-colors flex items-center justify-between ${
