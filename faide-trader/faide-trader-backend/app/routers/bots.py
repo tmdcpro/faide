@@ -5,7 +5,7 @@ from sqlalchemy.orm import selectinload
 
 from app.database import get_db
 from app.models.portfolio import Bot, Account, Trade
-from app.schemas import BotCreate, BotUpdate, BotResponse
+from app.schemas import BotCreate, BotUpdate, BotResponse, SymbolPnlResponse
 from app.services.calculation_engine import calculate_stats_from_trades
 
 router = APIRouter(prefix="/api", tags=["bots"])
@@ -19,6 +19,7 @@ def build_bot_response(bot: Bot, trades: list[Trade], initial_balance: float) ->
         name=bot.name,
         strategy_type=bot.strategy_type,
         symbol=bot.symbol,
+        symbols=bot.symbols,
         is_active=bot.is_active,
         created_at=bot.created_at,
         updated_at=bot.updated_at,
@@ -60,6 +61,12 @@ async def create_bot(
     if not account:
         raise HTTPException(status_code=404, detail="Account not found")
 
+    # Build symbols list: combine primary symbol + additional symbols
+    all_symbols = [data.symbol] if data.symbol else []
+    for s in data.symbols:
+        if s not in all_symbols:
+            all_symbols.append(s)
+
     bot = Bot(
         account_id=account_id,
         name=data.name,
@@ -67,6 +74,8 @@ async def create_bot(
         symbol=data.symbol,
         is_active=data.is_active,
     )
+    if all_symbols:
+        bot.symbols = all_symbols
     db.add(bot)
     await db.commit()
     await db.refresh(bot)
@@ -76,6 +85,7 @@ async def create_bot(
         name=bot.name,
         strategy_type=bot.strategy_type,
         symbol=bot.symbol,
+        symbols=bot.symbols,
         is_active=bot.is_active,
         created_at=bot.created_at,
         updated_at=bot.updated_at,
@@ -109,7 +119,9 @@ async def update_bot(
         bot.name = data.name
     if data.strategy_type is not None:
         bot.strategy_type = data.strategy_type
-    if data.symbol is not None:
+    if data.symbols is not None:
+        bot.symbols = data.symbols
+    elif data.symbol is not None:
         bot.symbol = data.symbol
     if data.is_active is not None:
         bot.is_active = data.is_active
@@ -125,6 +137,59 @@ async def update_bot(
     initial_balance = account.initial_balance if account else 10000.0
 
     return build_bot_response(bot, trades, initial_balance)
+
+
+@router.get("/bots/{bot_id}/symbol-pnl", response_model=list[SymbolPnlResponse])
+async def get_symbol_pnl(bot_id: int, db: AsyncSession = Depends(get_db)):
+    """Get per-symbol P&L breakdown for a bot."""
+    result = await db.execute(
+        select(Bot).where(Bot.id == bot_id).options(selectinload(Bot.trades))
+    )
+    bot = result.scalar_one_or_none()
+    if not bot:
+        raise HTTPException(status_code=404, detail="Bot not found")
+
+    # Group trades by symbol
+    symbol_trades: dict[str, list[Trade]] = {}
+    for trade in bot.trades:
+        symbol_trades.setdefault(trade.symbol, []).append(trade)
+
+    # Build per-symbol stats
+    symbol_pnls: list[SymbolPnlResponse] = []
+    for sym in bot.symbols:
+        trades = symbol_trades.get(sym, [])
+        total_pnl = sum(t.pnl for t in trades)
+        wins = [t for t in trades if t.pnl > 0]
+        losses = [t for t in trades if t.pnl <= 0]
+        total = len(trades)
+        symbol_pnls.append(SymbolPnlResponse(
+            symbol=sym,
+            total_pnl=round(total_pnl, 2),
+            total_trades=total,
+            win_count=len(wins),
+            loss_count=len(losses),
+            win_rate=round(len(wins) / total * 100, 2) if total > 0 else 0.0,
+            avg_pnl=round(total_pnl / total, 2) if total > 0 else 0.0,
+        ))
+
+    # Also include symbols that have trades but aren't in bot.symbols
+    for sym, trades in symbol_trades.items():
+        if sym not in bot.symbols:
+            total_pnl = sum(t.pnl for t in trades)
+            wins = [t for t in trades if t.pnl > 0]
+            losses = [t for t in trades if t.pnl <= 0]
+            total = len(trades)
+            symbol_pnls.append(SymbolPnlResponse(
+                symbol=sym,
+                total_pnl=round(total_pnl, 2),
+                total_trades=total,
+                win_count=len(wins),
+                loss_count=len(losses),
+                win_rate=round(len(wins) / total * 100, 2) if total > 0 else 0.0,
+                avg_pnl=round(total_pnl / total, 2) if total > 0 else 0.0,
+            ))
+
+    return symbol_pnls
 
 
 @router.delete("/bots/{bot_id}")

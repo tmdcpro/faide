@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { api } from '@/lib/api';
 import { X, Download, Loader2 } from 'lucide-react';
+import { SymbolSelector } from '@/components/SymbolSelector';
 
 interface MarketDataImportDialogProps {
   onClose: () => void;
@@ -25,7 +26,7 @@ const TIMEFRAMES = [
 
 export function MarketDataImportDialog({ onClose, onImported }: MarketDataImportDialogProps) {
   const [exchange, setExchange] = useState('bitget_futures');
-  const [symbol, setSymbol] = useState('BTC/USDT:USDT');
+  const [selectedSymbols, setSelectedSymbols] = useState<string[]>([]);
   const [timeframe, setTimeframe] = useState('1d');
   const [startDate, setStartDate] = useState(() => {
     const d = new Date();
@@ -35,17 +36,24 @@ export function MarketDataImportDialog({ onClose, onImported }: MarketDataImport
   const [endDate, setEndDate] = useState(() => new Date().toISOString().split('T')[0]);
   const [limit, setLimit] = useState(365);
   const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState<{ imported: number; exchange: string; symbol: string } | null>(null);
+  const [result, setResult] = useState<{
+    imported: number;
+    exchange: string;
+    symbol?: string;
+    symbols?: string[];
+    per_symbol?: Record<string, number>;
+  } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const handleImport = async () => {
+    if (selectedSymbols.length === 0) return;
     setLoading(true);
     setError(null);
     setResult(null);
     try {
       const res = await api.importMarketData({
         exchange,
-        symbol,
+        symbols: selectedSymbols,
         timeframe,
         since: startDate,
         end_date: endDate,
@@ -78,7 +86,10 @@ export function MarketDataImportDialog({ onClose, onImported }: MarketDataImport
             <label className="block text-xs text-gray-400 mb-1">Exchange</label>
             <select
               value={exchange}
-              onChange={(e) => setExchange(e.target.value)}
+              onChange={(e) => {
+                setExchange(e.target.value);
+                setSelectedSymbols([]);
+              }}
               className="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-sm"
             >
               {EXCHANGES.map((ex) => (
@@ -88,17 +99,16 @@ export function MarketDataImportDialog({ onClose, onImported }: MarketDataImport
           </div>
 
           <div>
-            <label className="block text-xs text-gray-400 mb-1">Symbol</label>
-            <input
-              type="text"
-              value={symbol}
-              onChange={(e) => setSymbol(e.target.value)}
-              placeholder="BTC/USDT:USDT"
-              className="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-sm"
+            <label className="block text-xs text-gray-400 mb-1">
+              Symbols ({selectedSymbols.length} selected)
+            </label>
+            <SymbolSelector
+              exchange={exchange}
+              selectedSymbols={selectedSymbols}
+              onChange={setSelectedSymbols}
+              multiple={true}
+              placeholder="Search and select symbols..."
             />
-            <p className="text-xs text-gray-500 mt-1">
-              Futures: BTC/USDT:USDT | Spot: BTC/USDT
-            </p>
           </div>
 
           <div>
@@ -136,7 +146,7 @@ export function MarketDataImportDialog({ onClose, onImported }: MarketDataImport
           </div>
 
           <div>
-            <label className="block text-xs text-gray-400 mb-1">Max Candles</label>
+            <label className="block text-xs text-gray-400 mb-1">Max Candles (per symbol)</label>
             <input
               type="number"
               value={limit}
@@ -153,7 +163,17 @@ export function MarketDataImportDialog({ onClose, onImported }: MarketDataImport
 
           {result && (
             <div className="bg-green-900/30 border border-green-700 rounded p-3 text-sm text-green-400">
-              Imported {result.imported} candles for {result.symbol} on {result.exchange}
+              <div>Imported {result.imported} total candles on {result.exchange}</div>
+              {result.per_symbol && (
+                <div className="mt-1 text-xs space-y-0.5">
+                  {Object.entries(result.per_symbol).map(([sym, count]) => (
+                    <div key={sym}>{sym}: {count} candles</div>
+                  ))}
+                </div>
+              )}
+              {result.symbol && !result.per_symbol && (
+                <div className="text-xs mt-1">{result.symbol}: {result.imported} candles</div>
+              )}
             </div>
           )}
 
@@ -166,11 +186,11 @@ export function MarketDataImportDialog({ onClose, onImported }: MarketDataImport
             </button>
             <button
               onClick={handleImport}
-              disabled={loading || !symbol}
+              disabled={loading || selectedSymbols.length === 0}
               className="px-4 py-2 text-sm rounded bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
             >
               {loading && <Loader2 size={14} className="animate-spin" />}
-              {loading ? 'Importing...' : 'Import Data'}
+              {loading ? 'Importing...' : `Import ${selectedSymbols.length > 0 ? `${selectedSymbols.length} Symbol${selectedSymbols.length > 1 ? 's' : ''}` : 'Data'}`}
             </button>
           </div>
         </div>

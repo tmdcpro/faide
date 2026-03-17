@@ -18,6 +18,8 @@ import { PeriodPnlView } from '@/components/PeriodPnlView';
 import { EditableField } from '@/components/EditableField';
 import { MarketDataImportDialog } from '@/components/MarketDataImportDialog';
 import { GenerateTradesDialog } from '@/components/GenerateTradesDialog';
+import { CreateBotDialog } from '@/components/CreateBotDialog';
+import { SymbolPnlView } from '@/components/SymbolPnlView';
 import {
   ChevronRight,
   Plus,
@@ -442,7 +444,7 @@ function App() {
                       <div>
                         <h3 className="font-medium">{b.name}</h3>
                         <p className="text-xs text-gray-400">
-                          {b.strategy_type} | {b.symbol} | {b.total_trades} trades
+                          {b.strategy_type} | {b.symbols && b.symbols.length > 1 ? `${b.symbols.length} symbols` : b.symbol} | {b.total_trades} trades
                         </p>
                       </div>
                     </div>
@@ -475,32 +477,14 @@ function App() {
         </div>
 
         {showCreate === 'bot' && (
-          <CreateDialog
-            title="Create Bot / Strategy"
-            fields={[
-              { name: 'name', label: 'Bot Name', type: 'text', required: true, defaultValue: '' },
-              {
-                name: 'strategy_type', label: 'Strategy Type', type: 'select',
-                options: [
-                  { value: 'manual', label: 'Manual Trading' },
-                  { value: 'scalping', label: 'Scalping' },
-                  { value: 'swing', label: 'Swing Trading' },
-                  { value: 'grid', label: 'Grid Bot' },
-                  { value: 'dca', label: 'DCA (Dollar Cost Avg)' },
-                  { value: 'arbitrage', label: 'Arbitrage' },
-                  { value: 'trend_following', label: 'Trend Following' },
-                  { value: 'mean_reversion', label: 'Mean Reversion' },
-                  { value: 'custom', label: 'Custom Algorithm' },
-                ],
-                defaultValue: 'manual',
-              },
-              { name: 'symbol', label: 'Trading Pair', type: 'text', defaultValue: 'BTC/USDT' },
-            ]}
+          <CreateBotDialog
+            accountExchange={currentAccount?.exchange || 'bitget_futures'}
             onSubmit={async (data) => {
               await api.createBot(view.accountId, {
-                name: data.name as string,
-                strategy_type: data.strategy_type as string,
-                symbol: data.symbol as string,
+                name: data.name,
+                strategy_type: data.strategy_type,
+                symbol: data.symbol,
+                symbols: data.symbols,
               });
               loadData();
             }}
@@ -524,7 +508,7 @@ function App() {
             <div>
               <h1 className="text-2xl font-bold">{currentBot?.name}</h1>
               <p className="text-xs text-gray-400">
-                {currentBot?.strategy_type} | {currentBot?.symbol} |{' '}
+                {currentBot?.strategy_type} | {currentBot?.symbols && currentBot.symbols.length > 1 ? `${currentBot.symbols.join(', ')}` : currentBot?.symbol} |{' '}
                 <span className={currentBot?.is_active ? 'text-green-400' : 'text-gray-400'}>
                   {currentBot?.is_active ? 'Active' : 'Inactive'}
                 </span>
@@ -571,6 +555,13 @@ function App() {
               entityId={view.botId}
               onRecalculated={loadData}
             />
+          </div>
+        )}
+
+        {/* Per-Symbol P&L Breakdown */}
+        {stats && stats.total_trades > 0 && (
+          <div className="mb-4">
+            <SymbolPnlView botId={view.botId} onRefresh={loadData} />
           </div>
         )}
 

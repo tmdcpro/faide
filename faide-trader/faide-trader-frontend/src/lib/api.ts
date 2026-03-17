@@ -45,6 +45,7 @@ export interface Bot {
   name: string;
   strategy_type: string;
   symbol: string;
+  symbols: string[];
   is_active: boolean;
   created_at: string;
   updated_at: string;
@@ -141,11 +142,22 @@ export interface TradeGenerateRequest {
 
 export interface MarketDataImportRequest {
   exchange: string;
-  symbol: string;
+  symbol?: string;
+  symbols?: string[];
   timeframe?: string;
   since?: string;
   end_date?: string;
   limit?: number;
+}
+
+export interface SymbolPnl {
+  symbol: string;
+  total_pnl: number;
+  total_trades: number;
+  win_count: number;
+  loss_count: number;
+  win_rate: number;
+  avg_pnl: number;
 }
 
 export interface RecalculateResult {
@@ -181,7 +193,7 @@ export const api = {
 
   // Bots
   listBots: (accountId: number) => request<Bot[]>(`/api/accounts/${accountId}/bots`),
-  createBot: (accountId: number, data: { name: string; strategy_type?: string; symbol?: string }) =>
+  createBot: (accountId: number, data: { name: string; strategy_type?: string; symbol?: string; symbols?: string[] }) =>
     request<Bot>(`/api/accounts/${accountId}/bots`, { method: 'POST', body: JSON.stringify(data) }),
   getBot: (id: number) => request<Bot>(`/api/bots/${id}`),
   updateBot: (id: number, data: Partial<Bot>) =>
@@ -217,7 +229,8 @@ export const api = {
   listExchanges: () => request<{ exchanges: { id: string; name: string; type: string }[] }>('/api/market-data/exchanges'),
   listSymbols: (exchange: string) => request<{ exchange: string; symbols: string[] }>(`/api/market-data/symbols/${exchange}`),
   importMarketData: (data: MarketDataImportRequest) =>
-    request<{ imported: number; exchange: string; symbol: string }>('/api/market-data/import', { method: 'POST', body: JSON.stringify(data) }),
+    request<{ imported: number; exchange: string; symbol?: string; symbols?: string[]; per_symbol?: Record<string, number> }>('/api/market-data/import', { method: 'POST', body: JSON.stringify(data) }),
+  getSymbolPnl: (botId: number) => request<SymbolPnl[]>(`/api/bots/${botId}/symbol-pnl`),
 
   // Trade Generation
   generateTrades: (botId: number, data: TradeGenerateRequest) =>

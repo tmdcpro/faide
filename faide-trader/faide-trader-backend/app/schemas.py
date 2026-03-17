@@ -62,7 +62,8 @@ class AccountResponse(BaseModel):
 class BotCreate(BaseModel):
     name: str
     strategy_type: str = "manual"
-    symbol: str = "BTC/USDT"
+    symbol: str = "BTC/USDT"  # primary symbol (backward compat)
+    symbols: list[str] = []  # additional symbols
     is_active: bool = True
 
 
@@ -70,6 +71,7 @@ class BotUpdate(BaseModel):
     name: Optional[str] = None
     strategy_type: Optional[str] = None
     symbol: Optional[str] = None
+    symbols: Optional[list[str]] = None
     is_active: Optional[bool] = None
 
 
@@ -79,6 +81,7 @@ class BotResponse(BaseModel):
     name: str
     strategy_type: str
     symbol: str
+    symbols: list[str] = []
     is_active: bool
     created_at: datetime
     updated_at: datetime
@@ -92,6 +95,16 @@ class BotResponse(BaseModel):
     profit_factor: float = 0.0
 
     model_config = {"from_attributes": True}
+
+
+class SymbolPnlResponse(BaseModel):
+    symbol: str
+    total_pnl: float = 0.0
+    total_trades: int = 0
+    win_count: int = 0
+    loss_count: int = 0
+    win_rate: float = 0.0
+    avg_pnl: float = 0.0
 
 
 # --- Trade ---
@@ -193,7 +206,8 @@ class TradeGenerateResponse(BaseModel):
 # --- Market Data ---
 class MarketDataImport(BaseModel):
     exchange: str
-    symbol: str
+    symbol: Optional[str] = None  # single symbol (backward compat)
+    symbols: Optional[list[str]] = None  # multiple symbols
     timeframe: str = "1d"
     since: Optional[str] = None  # ISO date string
     end_date: Optional[str] = None  # ISO date string for end of range

@@ -1,3 +1,4 @@
+import json
 from datetime import datetime
 from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey, Boolean, Enum as SAEnum
 from sqlalchemy.orm import relationship
@@ -58,6 +59,7 @@ class Bot(Base):
     name = Column(String, nullable=False)
     strategy_type = Column(String, default="manual")
     symbol = Column(String, default="BTC/USDT")
+    _symbols = Column("symbols", String, default="[]")  # JSON-encoded list of symbols
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -65,6 +67,29 @@ class Bot(Base):
     account = relationship("Account", back_populates="bots")
     trades = relationship("Trade", back_populates="bot", cascade="all, delete-orphan")
     pnl_records = relationship("PnlRecord", back_populates="bot", cascade="all, delete-orphan")
+
+    @property
+    def symbols(self) -> list[str]:
+        """Get the list of all symbols this bot trades."""
+        try:
+            stored = json.loads(self._symbols) if self._symbols else []
+        except (json.JSONDecodeError, TypeError):
+            stored = []
+        # Always include primary symbol
+        all_symbols = [self.symbol] if self.symbol else []
+        for s in stored:
+            if s not in all_symbols:
+                all_symbols.append(s)
+        return all_symbols
+
+    @symbols.setter
+    def symbols(self, value: list[str]) -> None:
+        """Set the list of symbols. First symbol becomes the primary."""
+        if value:
+            self.symbol = value[0]
+            self._symbols = json.dumps(value)
+        else:
+            self._symbols = "[]"
 
 
 class Trade(Base):

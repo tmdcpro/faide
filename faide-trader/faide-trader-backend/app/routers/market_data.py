@@ -8,6 +8,7 @@ from app.database import get_db
 from app.schemas import MarketDataImport, OHLCVResponse
 from app.services.market_data import (
     import_market_data,
+    import_multiple_symbols,
     get_available_symbols,
     get_stored_ohlcv,
 )
@@ -39,16 +40,42 @@ async def list_symbols(exchange: str):
 
 @router.post("/import")
 async def import_data(data: MarketDataImport, db: AsyncSession = Depends(get_db)):
+    # Build the list of symbols to import
+    symbols_to_import: list[str] = []
+    if data.symbols:
+        symbols_to_import = data.symbols
+    elif data.symbol:
+        symbols_to_import = [data.symbol]
+    else:
+        raise HTTPException(status_code=400, detail="Either 'symbol' or 'symbols' must be provided")
+
     try:
-        count = await import_market_data(
-            db=db,
-            exchange_name=data.exchange,
-            symbol=data.symbol,
-            timeframe=data.timeframe,
-            since=data.since,
-            limit=data.limit,
-        )
-        return {"imported": count, "exchange": data.exchange, "symbol": data.symbol}
+        if len(symbols_to_import) == 1:
+            count = await import_market_data(
+                db=db,
+                exchange_name=data.exchange,
+                symbol=symbols_to_import[0],
+                timeframe=data.timeframe,
+                since=data.since,
+                limit=data.limit,
+            )
+            return {"imported": count, "exchange": data.exchange, "symbol": symbols_to_import[0]}
+        else:
+            results = await import_multiple_symbols(
+                db=db,
+                exchange_name=data.exchange,
+                symbols=symbols_to_import,
+                timeframe=data.timeframe,
+                since=data.since,
+                limit=data.limit,
+            )
+            total = sum(results.values())
+            return {
+                "imported": total,
+                "exchange": data.exchange,
+                "symbols": list(results.keys()),
+                "per_symbol": results,
+            }
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:

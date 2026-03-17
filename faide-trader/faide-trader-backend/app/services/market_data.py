@@ -114,10 +114,26 @@ async def get_available_symbols(exchange_name: str) -> list[str]:
     try:
         await asyncio.to_thread(exchange.load_markets)
         symbols = list(exchange.symbols)
-        return sorted(symbols)[:100]  # Return top 100
+        return sorted(symbols)
     finally:
         if hasattr(exchange, 'close'):
             exchange.close()
+
+
+async def import_multiple_symbols(
+    db: AsyncSession,
+    exchange_name: str,
+    symbols: list[str],
+    timeframe: str = "1d",
+    since: Optional[str] = None,
+    limit: int = 365,
+) -> dict[str, int]:
+    """Import OHLCV data for multiple symbols. Returns {symbol: count} map."""
+    results: dict[str, int] = {}
+    for symbol in symbols:
+        count = await import_market_data(db, exchange_name, symbol, timeframe, since, limit)
+        results[symbol] = count
+    return results
 
 
 async def get_stored_ohlcv(
