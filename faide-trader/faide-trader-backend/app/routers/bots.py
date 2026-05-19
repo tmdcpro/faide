@@ -21,6 +21,8 @@ def build_bot_response(bot: Bot, trades: list[Trade], initial_balance: float) ->
         symbol=bot.symbol,
         symbols=bot.symbols,
         is_active=bot.is_active,
+        is_pinned=bot.is_pinned,
+        pinned_stats=bot.pinned_stats,
         created_at=bot.created_at,
         updated_at=bot.updated_at,
         total_pnl=stats["total_pnl"],
@@ -125,6 +127,10 @@ async def update_bot(
         bot.symbol = data.symbol
     if data.is_active is not None:
         bot.is_active = data.is_active
+    if data.is_pinned is not None:
+        bot.is_pinned = data.is_pinned
+    if data.pinned_stats is not None:
+        bot.pinned_stats = data.pinned_stats
 
     await db.commit()
     await db.refresh(bot)

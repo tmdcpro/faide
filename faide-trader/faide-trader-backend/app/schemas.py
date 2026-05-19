@@ -39,6 +39,7 @@ class AccountUpdate(BaseModel):
     exchange: Optional[str] = None
     initial_balance: Optional[float] = None
     current_balance: Optional[float] = None
+    is_pinned: Optional[bool] = None
 
 
 class AccountResponse(BaseModel):
@@ -48,6 +49,7 @@ class AccountResponse(BaseModel):
     exchange: str
     initial_balance: float
     current_balance: float
+    is_pinned: bool = False
     created_at: datetime
     updated_at: datetime
     bot_count: int = 0
@@ -73,6 +75,8 @@ class BotUpdate(BaseModel):
     symbol: Optional[str] = None
     symbols: Optional[list[str]] = None
     is_active: Optional[bool] = None
+    is_pinned: Optional[bool] = None
+    pinned_stats: Optional[list[str]] = None
 
 
 class BotResponse(BaseModel):
@@ -83,6 +87,8 @@ class BotResponse(BaseModel):
     symbol: str
     symbols: list[str] = []
     is_active: bool
+    is_pinned: bool = False
+    pinned_stats: list[str] = []
     created_at: datetime
     updated_at: datetime
     total_pnl: float = 0.0
@@ -230,6 +236,25 @@ class RecalculateRequest(BaseModel):
     field: str
     new_value: float
     pinned_fields: list[str] = []
+    period_key: Optional[str] = None  # for per-period stat editing
+    period_type: Optional[str] = None  # "daily", "weekly", "monthly"
+
+
+class TogglePinRequest(BaseModel):
+    entity_type: str  # "bot", "account", "trade", "period"
+    entity_id: int
+    field: Optional[str] = None  # for stat-level pin; None for entity-level
+    period_key: Optional[str] = None  # for period-level pin
+    period_type: Optional[str] = None
+    pinned: bool = True
+
+
+class TogglePinResponse(BaseModel):
+    success: bool
+    entity_type: str
+    entity_id: int
+    field: Optional[str] = None
+    pinned: bool
 
 
 class RecalculateResponse(BaseModel):
@@ -252,6 +277,12 @@ class PeriodPnlResponse(BaseModel):
     win_rate: float = 0.0
     drawdown: float = 0.0
     drawdown_percent: float = 0.0
+    avg_pnl: float = 0.0
+    best_trade: float = 0.0
+    worst_trade: float = 0.0
+    total_fees: float = 0.0
+    profit_factor: float = 0.0
+    is_pinned: bool = False
 
     model_config = {"from_attributes": True}
 
@@ -261,6 +292,9 @@ class PeriodPnlUpdate(BaseModel):
     trade_count: Optional[int] = None
     win_count: Optional[int] = None
     loss_count: Optional[int] = None
+    win_rate: Optional[float] = None
+    profit_factor: Optional[float] = None
+    is_pinned: Optional[bool] = None
 
 
 # --- Stats ---

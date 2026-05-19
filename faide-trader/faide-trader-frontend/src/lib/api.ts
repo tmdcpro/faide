@@ -31,6 +31,7 @@ export interface Account {
   exchange: string;
   initial_balance: number;
   current_balance: number;
+  is_pinned: boolean;
   created_at: string;
   updated_at: string;
   bot_count: number;
@@ -47,6 +48,8 @@ export interface Bot {
   symbol: string;
   symbols: string[];
   is_active: boolean;
+  is_pinned: boolean;
+  pinned_stats: string[];
   created_at: string;
   updated_at: string;
   total_pnl: number;
@@ -126,6 +129,21 @@ export interface PeriodPnl {
   win_rate: number;
   drawdown: number;
   drawdown_percent: number;
+  avg_pnl: number;
+  best_trade: number;
+  worst_trade: number;
+  total_fees: number;
+  profit_factor: number;
+  is_pinned: boolean;
+}
+
+export interface TogglePinRequest {
+  entity_type: 'bot' | 'account' | 'trade' | 'period';
+  entity_id: number;
+  field?: string;
+  period_key?: string;
+  period_type?: string;
+  pinned: boolean;
 }
 
 export interface TradeGenerateRequest {
@@ -217,7 +235,7 @@ export const api = {
     request<PnlRecord>(`/api/pnl/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
 
   // Recalculate
-  recalculate: (data: { entity_type: string; entity_id: number; field: string; new_value: number; pinned_fields?: string[] }) =>
+  recalculate: (data: { entity_type: string; entity_id: number; field: string; new_value: number; pinned_fields?: string[]; period_key?: string; period_type?: string }) =>
     request<RecalculateResult>('/api/recalculate', { method: 'POST', body: JSON.stringify(data) }),
 
   // Stats
@@ -243,9 +261,25 @@ export const api = {
     request<PeriodPnl[]>(`/api/accounts/${accountId}/period-pnl${periodType ? `?period_type=${periodType}` : ''}`),
   getPortfolioPeriodPnl: (portfolioId: number, periodType?: string) =>
     request<PeriodPnl[]>(`/api/portfolios/${portfolioId}/period-pnl${periodType ? `?period_type=${periodType}` : ''}`),
-  updatePeriodPnl: (botId: number, periodKey: string, data: { pnl?: number }, periodType?: string) =>
+  updatePeriodPnl: (botId: number, periodKey: string, data: { pnl?: number; win_rate?: number; profit_factor?: number; is_pinned?: boolean }, periodType?: string) =>
     request<{ periods: PeriodPnl[]; bot_stats: Record<string, number> }>(
       `/api/bots/${botId}/period-pnl/${periodKey}${periodType ? `?period_type=${periodType}` : ''}`,
       { method: 'PUT', body: JSON.stringify(data) }
+    ),
+  updateAccountPeriodPnl: (accountId: number, periodKey: string, data: { pnl?: number }, periodType?: string) =>
+    request<{ periods: PeriodPnl[]; account_stats: Record<string, number> }>(
+      `/api/accounts/${accountId}/period-pnl/${periodKey}${periodType ? `?period_type=${periodType}` : ''}`,
+      { method: 'PUT', body: JSON.stringify(data) }
+    ),
+  updatePortfolioPeriodPnl: (portfolioId: number, periodKey: string, data: { pnl?: number }, periodType?: string) =>
+    request<{ periods: PeriodPnl[]; portfolio_stats: Record<string, number> }>(
+      `/api/portfolios/${portfolioId}/period-pnl/${periodKey}${periodType ? `?period_type=${periodType}` : ''}`,
+      { method: 'PUT', body: JSON.stringify(data) }
+    ),
+
+  // Pin/Lock
+  togglePin: (data: TogglePinRequest) =>
+    request<{ success: boolean; entity_type: string; entity_id: number; field?: string; pinned: boolean }>(
+      '/api/toggle-pin', { method: 'POST', body: JSON.stringify(data) }
     ),
 };

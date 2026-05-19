@@ -32,6 +32,8 @@ import {
   RefreshCw,
   Download,
   Zap,
+  Lock,
+  Unlock,
 } from 'lucide-react';
 
 type View =
@@ -293,7 +295,10 @@ function App() {
                       <Wallet size={20} className="text-blue-400" />
                     </div>
                     <div>
-                      <h3 className="font-medium">{a.name}</h3>
+                      <h3 className="font-medium">
+                        {a.name}
+                        {a.is_pinned && <Lock size={12} className="inline ml-1 text-yellow-400" />}
+                      </h3>
                       <p className="text-xs text-gray-400">
                         {a.exchange.replace('_', ' ').toUpperCase()} | {a.bot_count} bot{a.bot_count !== 1 ? 's' : ''} | {a.total_trades} trades
                       </p>
@@ -378,10 +383,35 @@ function App() {
               <p className="text-xs text-gray-400">
                 {currentAccount?.exchange.replace('_', ' ').toUpperCase()} | Initial: $
                 {currentAccount?.initial_balance.toLocaleString()}
+                {currentAccount?.is_pinned && (
+                  <span className="text-yellow-400 ml-1">
+                    <Lock size={12} className="inline" /> Locked
+                  </span>
+                )}
               </p>
             </div>
           </div>
           <div className="flex items-center gap-2">
+            <button
+              onClick={async () => {
+                if (!currentAccount) return;
+                await api.togglePin({
+                  entity_type: 'account',
+                  entity_id: currentAccount.id,
+                  pinned: !currentAccount.is_pinned,
+                });
+                loadData();
+              }}
+              className={`flex items-center gap-1 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+                currentAccount?.is_pinned
+                  ? 'bg-yellow-600/20 text-yellow-400 hover:bg-yellow-600/30'
+                  : 'bg-slate-700 text-gray-400 hover:bg-slate-600'
+              }`}
+              title={currentAccount?.is_pinned ? 'Unlock account' : 'Lock account'}
+            >
+              {currentAccount?.is_pinned ? <Lock size={14} /> : <Unlock size={14} />}
+              {currentAccount?.is_pinned ? 'Locked' : 'Lock'}
+            </button>
             <button onClick={loadData} className="p-2 hover:bg-slate-700 rounded-lg transition-colors">
               <RefreshCw size={16} />
             </button>
@@ -442,7 +472,10 @@ function App() {
                         <BotIcon size={20} className={b.is_active ? 'text-green-400' : 'text-gray-400'} />
                       </div>
                       <div>
-                        <h3 className="font-medium">{b.name}</h3>
+                        <h3 className="font-medium">
+                          {b.name}
+                          {b.is_pinned && <Lock size={12} className="inline ml-1 text-yellow-400" />}
+                        </h3>
                         <p className="text-xs text-gray-400">
                           {b.strategy_type} | {b.symbols && b.symbols.length > 1 ? `${b.symbols.length} symbols` : b.symbol} | {b.total_trades} trades
                         </p>
@@ -512,10 +545,35 @@ function App() {
                 <span className={currentBot?.is_active ? 'text-green-400' : 'text-gray-400'}>
                   {currentBot?.is_active ? 'Active' : 'Inactive'}
                 </span>
+                {currentBot?.is_pinned && (
+                  <span className="text-yellow-400 ml-1">
+                    <Lock size={12} className="inline" /> Locked
+                  </span>
+                )}
               </p>
             </div>
           </div>
           <div className="flex items-center gap-2">
+            <button
+              onClick={async () => {
+                if (!currentBot) return;
+                await api.togglePin({
+                  entity_type: 'bot',
+                  entity_id: currentBot.id,
+                  pinned: !currentBot.is_pinned,
+                });
+                loadData();
+              }}
+              className={`flex items-center gap-1 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+                currentBot?.is_pinned
+                  ? 'bg-yellow-600/20 text-yellow-400 hover:bg-yellow-600/30'
+                  : 'bg-slate-700 text-gray-400 hover:bg-slate-600'
+              }`}
+              title={currentBot?.is_pinned ? 'Unlock bot (allow recalculation)' : 'Lock bot (protect from recalculation)'}
+            >
+              {currentBot?.is_pinned ? <Lock size={14} /> : <Unlock size={14} />}
+              {currentBot?.is_pinned ? 'Locked' : 'Lock'}
+            </button>
             <button onClick={loadData} className="p-2 hover:bg-slate-700 rounded-lg transition-colors">
               <RefreshCw size={16} />
             </button>
@@ -553,6 +611,7 @@ function App() {
               title="Bot Statistics"
               entityType="bot"
               entityId={view.botId}
+              pinnedStats={currentBot?.pinned_stats || []}
               onRecalculated={loadData}
             />
           </div>

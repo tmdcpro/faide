@@ -44,6 +44,7 @@ class Account(Base):
     exchange = Column(String, nullable=False)
     initial_balance = Column(Float, default=10000.0)
     current_balance = Column(Float, default=10000.0)
+    is_pinned = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -61,12 +62,27 @@ class Bot(Base):
     symbol = Column(String, default="BTC/USDT")
     _symbols = Column("symbols", String, default="[]")  # JSON-encoded list of symbols
     is_active = Column(Boolean, default=True)
+    is_pinned = Column(Boolean, default=False)
+    _pinned_stats = Column("pinned_stats", String, default="[]")  # JSON-encoded list of pinned stat field names
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     account = relationship("Account", back_populates="bots")
     trades = relationship("Trade", back_populates="bot", cascade="all, delete-orphan")
     pnl_records = relationship("PnlRecord", back_populates="bot", cascade="all, delete-orphan")
+
+    @property
+    def pinned_stats(self) -> list[str]:
+        """Get the list of stat fields that are pinned/locked."""
+        try:
+            return json.loads(self._pinned_stats) if self._pinned_stats else []
+        except (json.JSONDecodeError, TypeError):
+            return []
+
+    @pinned_stats.setter
+    def pinned_stats(self, value: list[str]) -> None:
+        """Set the list of pinned stat field names."""
+        self._pinned_stats = json.dumps(value if value else [])
 
     @property
     def symbols(self) -> list[str]:

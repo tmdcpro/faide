@@ -20,3 +20,23 @@ async def get_db():
 async def init_db():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+
+    # Add new columns to existing tables if they don't exist (no Alembic)
+    async with engine.begin() as conn:
+        await conn.run_sync(_migrate_columns)
+
+
+def _migrate_columns(conn):
+    """Add columns that may be missing from older DB schemas."""
+    import sqlalchemy as sa
+
+    migrations = [
+        ("accounts", "is_pinned", "BOOLEAN DEFAULT 0"),
+        ("bots", "is_pinned", "BOOLEAN DEFAULT 0"),
+        ("bots", "pinned_stats", "VARCHAR DEFAULT '[]'"),
+    ]
+    for table, column, col_type in migrations:
+        try:
+            conn.execute(sa.text(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}"))
+        except Exception:
+            pass  # Column already exists

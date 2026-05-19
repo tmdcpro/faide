@@ -252,7 +252,7 @@ async def rebuild_pnl_records(db: AsyncSession, bot_id: int, trades: list[Trade]
 
 
 async def recalculate_account(db: AsyncSession, account_id: int) -> dict:
-    """Recalculate account-level stats from all its bots."""
+    """Recalculate account-level stats from all its bots. Pinned bots are not recalculated."""
     account = await db.get(Account, account_id)
     if not account:
         return {}
@@ -265,7 +265,17 @@ async def recalculate_account(db: AsyncSession, account_id: int) -> dict:
     total_wins = 0
 
     for bot in bots:
-        bot_stats = await recalculate_bot_from_trades(db, bot.id)
+        if bot.is_pinned:
+            # Pinned bot: gather stats without recalculating
+            trade_result = await db.execute(
+                select(Trade).where(Trade.bot_id == bot.id).order_by(Trade.entry_time)
+            )
+            bot_trades = list(trade_result.scalars().all())
+            bot_account = await db.get(Account, bot.account_id)
+            ib = bot_account.initial_balance if bot_account else 10000.0
+            bot_stats = calculate_stats_from_trades(bot_trades, ib)
+        else:
+            bot_stats = await recalculate_bot_from_trades(db, bot.id)
         total_pnl += bot_stats.get("net_pnl", 0.0)
         total_trades += bot_stats.get("total_trades", 0)
         total_wins += bot_stats.get("win_count", 0)
@@ -284,7 +294,7 @@ async def recalculate_account(db: AsyncSession, account_id: int) -> dict:
 
 
 async def recalculate_portfolio(db: AsyncSession, portfolio_id: int) -> dict:
-    """Recalculate portfolio-level stats from all accounts."""
+    """Recalculate portfolio-level stats from all accounts. Pinned accounts are not recalculated."""
     result = await db.execute(select(Account).where(Account.portfolio_id == portfolio_id))
     accounts = list(result.scalars().all())
 
@@ -292,9 +302,13 @@ async def recalculate_portfolio(db: AsyncSession, portfolio_id: int) -> dict:
     total_balance = 0.0
 
     for account in accounts:
-        acct_stats = await recalculate_account(db, account.id)
-        total_pnl += acct_stats.get("total_pnl", 0.0)
-        total_balance += acct_stats.get("current_balance", account.initial_balance)
+        if account.is_pinned:
+            total_pnl += account.current_balance - account.initial_balance
+            total_balance += account.current_balance
+        else:
+            acct_stats = await recalculate_account(db, account.id)
+            total_pnl += acct_stats.get("total_pnl", 0.0)
+            total_balance += acct_stats.get("current_balance", account.initial_balance)
 
     return {
         "total_pnl": round(total_pnl, 2),
@@ -555,32 +569,43 @@ async def handle_stat_edit(
     return trades
 
 
+def _get_trade_period_key(trade: Trade, period_type: str) -> Optional[str]:
+    """Get the period key for a trade based on its exit/entry time."""
+    trade_date = trade.exit_time or trade.entry_time
+    if trade_date is None:
+        return None
+    if period_type == "monthly":
+        return trade_date.strftime("%Y-%m")
+    elif period_type == "weekly":
+        iso = trade_date.isocalendar()
+        return f"{iso[0]}-W{iso[1]:02d}"
+    else:
+        return trade_date.strftime("%Y-%m-%d")
+
+
 def aggregate_period_pnl(
     trades: list[Trade],
     period_type: str,
     initial_balance: float = 10000.0,
+    pinned_periods: Optional[set[str]] = None,
 ) -> list[dict]:
     """
     Aggregate trades into period P&L buckets (daily, weekly, monthly).
-    Returns list of period summaries with drawdown calculations.
+    Returns list of period summaries with drawdown and derived stats.
     """
     if not trades:
         return []
 
+    if pinned_periods is None:
+        pinned_periods = set()
+
     # Group trades by period
     period_buckets: dict[str, dict] = {}
+    period_trades: dict[str, list[Trade]] = {}
     for trade in trades:
-        trade_date = trade.exit_time or trade.entry_time
-        if trade_date is None:
+        period_key = _get_trade_period_key(trade, period_type)
+        if period_key is None:
             continue
-
-        if period_type == "monthly":
-            period_key = trade_date.strftime("%Y-%m")
-        elif period_type == "weekly":
-            iso = trade_date.isocalendar()
-            period_key = f"{iso[0]}-W{iso[1]:02d}"
-        else:  # daily
-            period_key = trade_date.strftime("%Y-%m-%d")
 
         if period_key not in period_buckets:
             period_buckets[period_key] = {
@@ -588,17 +613,23 @@ def aggregate_period_pnl(
                 "trade_count": 0,
                 "win_count": 0,
                 "loss_count": 0,
+                "fees": 0.0,
+                "pnls": [],
             }
+            period_trades[period_key] = []
 
         bucket = period_buckets[period_key]
         bucket["pnl"] += trade.pnl
         bucket["trade_count"] += 1
+        bucket["fees"] += trade.fee
+        bucket["pnls"].append(trade.pnl)
+        period_trades[period_key].append(trade)
         if trade.pnl > 0:
             bucket["win_count"] += 1
         else:
             bucket["loss_count"] += 1
 
-    # Build results with cumulative P&L and drawdown
+    # Build results with cumulative P&L, drawdown, and derived stats
     results = []
     cumulative_pnl = 0.0
     peak_equity = initial_balance
@@ -614,7 +645,14 @@ def aggregate_period_pnl(
 
         tc = bucket["trade_count"]
         wc = bucket["win_count"]
+        pnls = bucket["pnls"]
         win_rate = (wc / tc * 100) if tc > 0 else 0.0
+        avg_pnl = (sum(pnls) / tc) if tc > 0 else 0.0
+        best_trade = max(pnls) if pnls else 0.0
+        worst_trade = min(pnls) if pnls else 0.0
+        gross_profit = sum(p for p in pnls if p > 0)
+        gross_loss = abs(sum(p for p in pnls if p <= 0))
+        profit_factor = (gross_profit / gross_loss) if gross_loss > 0 else (999.99 if gross_profit > 0 else 0.0)
 
         results.append({
             "period": period_key,
@@ -627,9 +665,25 @@ def aggregate_period_pnl(
             "win_rate": round(win_rate, 2),
             "drawdown": round(drawdown, 2),
             "drawdown_percent": round(drawdown_pct, 2),
+            "avg_pnl": round(avg_pnl, 2),
+            "best_trade": round(best_trade, 2),
+            "worst_trade": round(worst_trade, 2),
+            "total_fees": round(bucket["fees"], 2),
+            "profit_factor": round(profit_factor, 2),
+            "is_pinned": period_key in pinned_periods,
         })
 
     return results
+
+
+def _get_period_trades(all_trades: list[Trade], period_key: str, period_type: str) -> list[Trade]:
+    """Filter trades belonging to a specific period."""
+    period_trades = []
+    for trade in all_trades:
+        key = _get_trade_period_key(trade, period_type)
+        if key == period_key:
+            period_trades.append(trade)
+    return period_trades
 
 
 async def handle_period_pnl_edit(
@@ -648,24 +702,7 @@ async def handle_period_pnl_edit(
         select(Trade).where(Trade.bot_id == bot_id).order_by(Trade.entry_time)
     )
     all_trades = list(result.scalars().all())
-
-    # Find trades in the specified period
-    period_trades = []
-    for trade in all_trades:
-        trade_date = trade.exit_time or trade.entry_time
-        if trade_date is None:
-            continue
-
-        if period_type == "monthly":
-            key = trade_date.strftime("%Y-%m")
-        elif period_type == "weekly":
-            iso = trade_date.isocalendar()
-            key = f"{iso[0]}-W{iso[1]:02d}"
-        else:
-            key = trade_date.strftime("%Y-%m-%d")
-
-        if key == period_key:
-            period_trades.append(trade)
+    period_trades = _get_period_trades(all_trades, period_key, period_type)
 
     if not period_trades:
         return all_trades
@@ -691,3 +728,89 @@ async def handle_period_pnl_edit(
 
     await db.flush()
     return all_trades
+
+
+async def handle_period_stat_edit(
+    db: AsyncSession,
+    bot_id: int,
+    period_key: str,
+    period_type: str,
+    field: str,
+    target_value: float,
+    pinned_fields: list[str],
+) -> list[Trade]:
+    """
+    Edit a derived stat (win_rate, profit_factor, etc.) for a specific period.
+    Back-calculates trades within that period to match the target stat.
+    """
+    result = await db.execute(
+        select(Trade).where(Trade.bot_id == bot_id).order_by(Trade.entry_time)
+    )
+    all_trades = list(result.scalars().all())
+    period_trades = _get_period_trades(all_trades, period_key, period_type)
+
+    if not period_trades:
+        return all_trades
+
+    unpinned = [t for t in period_trades if not t.is_pinned]
+    if not unpinned:
+        return all_trades
+
+    if field == "pnl":
+        return await handle_period_pnl_edit(db, bot_id, period_key, period_type, target_value, pinned_fields)
+
+    elif field == "win_rate":
+        target_wins = max(0, min(len(period_trades), int(round(target_value / 100 * len(period_trades)))))
+        unpinned_wins = [t for t in unpinned if t.pnl > 0]
+        unpinned_losses = [t for t in unpinned if t.pnl <= 0]
+        pinned_wins = len([t for t in period_trades if t.is_pinned and t.pnl > 0])
+        needed_wins = max(0, min(target_wins - pinned_wins, len(unpinned)))
+
+        if needed_wins > len(unpinned_wins):
+            to_flip = needed_wins - len(unpinned_wins)
+            for trade in unpinned_losses[:to_flip]:
+                trade.pnl = abs(trade.pnl) if trade.pnl != 0 else round(abs(trade.entry_price * trade.quantity * 0.01), 4)
+                _back_calculate_exit_price(trade)
+        elif needed_wins < len(unpinned_wins):
+            to_flip = len(unpinned_wins) - needed_wins
+            for trade in unpinned_wins[:to_flip]:
+                trade.pnl = -abs(trade.pnl) if trade.pnl != 0 else round(-abs(trade.entry_price * trade.quantity * 0.01), 4)
+                _back_calculate_exit_price(trade)
+
+    elif field == "profit_factor":
+        wins = [t for t in unpinned if t.pnl > 0]
+        losses = [t for t in unpinned if t.pnl <= 0]
+        gross_loss = abs(sum(t.pnl for t in losses)) if losses else 1.0
+
+        if target_value > 0 and gross_loss > 0 and wins:
+            target_gross_profit = target_value * gross_loss
+            current_gross_profit = sum(t.pnl for t in wins)
+            if current_gross_profit > 0:
+                ratio = target_gross_profit / current_gross_profit
+                for trade in wins:
+                    trade.pnl = round(trade.pnl * ratio, 4)
+                    _back_calculate_exit_price(trade)
+
+    await db.flush()
+    return all_trades
+
+
+async def get_pinned_periods(db: AsyncSession, bot_id: int, period_type: str) -> set[str]:
+    """Get the set of pinned period keys for a bot."""
+    result = await db.execute(
+        select(PnlRecord).where(
+            PnlRecord.bot_id == bot_id,
+            PnlRecord.is_pinned == True,
+            PnlRecord.period_type == period_type,
+        )
+    )
+    pinned = set()
+    for record in result.scalars().all():
+        if period_type == "monthly":
+            pinned.add(record.date.strftime("%Y-%m"))
+        elif period_type == "weekly":
+            iso = record.date.isocalendar()
+            pinned.add(f"{iso[0]}-W{iso[1]:02d}")
+        else:
+            pinned.add(record.date.strftime("%Y-%m-%d"))
+    return pinned
