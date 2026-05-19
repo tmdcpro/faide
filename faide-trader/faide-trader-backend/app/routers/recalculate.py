@@ -600,19 +600,35 @@ async def update_account_period_pnl(
         raise HTTPException(status_code=404, detail="Account not found")
 
     if data.pnl is not None:
+        from app.services.calculation_engine import _get_trade_period_key
+
         result = await db.execute(select(Bot).where(Bot.account_id == account_id))
-        bots = [b for b in result.scalars().all() if not b.is_pinned]
-        if not bots:
+        all_bots = list(result.scalars().all())
+        unpinned_bots = [b for b in all_bots if not b.is_pinned]
+        if not unpinned_bots:
             raise HTTPException(status_code=400, detail="All bots are pinned")
 
-        # Get each bot's current P&L for this period to distribute proportionally
+        # Compute pinned bots' period PnL to subtract from target
+        pinned_period_pnl = 0.0
+        for bot in all_bots:
+            if bot.is_pinned:
+                trade_result = await db.execute(
+                    select(Trade).where(Trade.bot_id == bot.id).order_by(Trade.entry_time)
+                )
+                pinned_period_pnl += sum(
+                    t.pnl for t in trade_result.scalars().all()
+                    if _get_trade_period_key(t, period_type) == period_key
+                )
+
+        distributable_target = data.pnl - pinned_period_pnl
+
+        # Get each unpinned bot's current P&L for this period to distribute proportionally
         bot_period_pnls: dict[int, float] = {}
-        for bot in bots:
+        for bot in unpinned_bots:
             trade_result = await db.execute(
                 select(Trade).where(Trade.bot_id == bot.id).order_by(Trade.entry_time)
             )
             bot_trades = list(trade_result.scalars().all())
-            from app.services.calculation_engine import _get_trade_period_key
             period_pnl = sum(
                 t.pnl for t in bot_trades
                 if _get_trade_period_key(t, period_type) == period_key
@@ -620,12 +636,12 @@ async def update_account_period_pnl(
             bot_period_pnls[bot.id] = period_pnl
 
         total_current = sum(bot_period_pnls.values())
-        for bot in bots:
+        for bot in unpinned_bots:
             if total_current != 0:
                 share = bot_period_pnls[bot.id] / total_current
             else:
-                share = 1.0 / len(bots)
-            bot_target = data.pnl * share
+                share = 1.0 / len(unpinned_bots)
+            bot_target = distributable_target * share
             await handle_period_pnl_edit(db, bot.id, period_key, period_type, bot_target, [])
 
     # Recalculate
@@ -663,17 +679,52 @@ async def update_portfolio_period_pnl(
         raise HTTPException(status_code=400, detail="All accounts are pinned")
 
     if data.pnl is not None:
-        # Pre-filter to accounts that have at least one unpinned bot
+        from app.services.calculation_engine import _get_trade_period_key
+
+        # Query ALL accounts (including pinned) to compute pinned PnL
+        all_acct_result = await db.execute(
+            select(Account).where(Account.portfolio_id == portfolio_id)
+        )
+        all_accounts_list = list(all_acct_result.scalars().all())
+
+        pinned_period_pnl = 0.0
+        # Add period PnL from pinned accounts
+        for acct in all_accounts_list:
+            if acct.is_pinned:
+                bot_result = await db.execute(select(Bot).where(Bot.account_id == acct.id))
+                for bot in bot_result.scalars().all():
+                    trade_result = await db.execute(
+                        select(Trade).where(Trade.bot_id == bot.id)
+                    )
+                    pinned_period_pnl += sum(
+                        t.pnl for t in trade_result.scalars().all()
+                        if _get_trade_period_key(t, period_type) == period_key
+                    )
+
+        # Pre-filter unpinned accounts to those with at least one unpinned bot
+        # Also accumulate period PnL from pinned bots within unpinned accounts
         distributable: list[tuple] = []
         for account in accounts:
             bot_result = await db.execute(select(Bot).where(Bot.account_id == account.id))
-            bots = [b for b in bot_result.scalars().all() if not b.is_pinned]
-            if bots:
-                distributable.append((account, bots))
+            all_bots = list(bot_result.scalars().all())
+            unpinned_bots = [b for b in all_bots if not b.is_pinned]
+            # Add period PnL from pinned bots within this unpinned account
+            for bot in all_bots:
+                if bot.is_pinned:
+                    trade_result = await db.execute(
+                        select(Trade).where(Trade.bot_id == bot.id)
+                    )
+                    pinned_period_pnl += sum(
+                        t.pnl for t in trade_result.scalars().all()
+                        if _get_trade_period_key(t, period_type) == period_key
+                    )
+            if unpinned_bots:
+                distributable.append((account, unpinned_bots))
         if not distributable:
             raise HTTPException(status_code=400, detail="All bots are pinned across accounts")
 
-        per_account = data.pnl / len(distributable)
+        distributable_target = data.pnl - pinned_period_pnl
+        per_account = distributable_target / len(distributable)
         for account, bots in distributable:
             per_bot = per_account / len(bots)
             for bot in bots:
