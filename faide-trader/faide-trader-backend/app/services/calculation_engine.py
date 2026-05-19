@@ -193,15 +193,23 @@ async def recalculate_bot_from_trades(db: AsyncSession, bot_id: int) -> dict:
 
 async def rebuild_pnl_records(db: AsyncSession, bot_id: int, trades: list[Trade]):
     """Rebuild daily PnL records from trades, preserving pinned records."""
-    # Get existing pinned records
+    # Get existing pinned daily records (exclude monthly/weekly pinned records)
     result = await db.execute(
-        select(PnlRecord).where(PnlRecord.bot_id == bot_id, PnlRecord.is_pinned == True)
+        select(PnlRecord).where(
+            PnlRecord.bot_id == bot_id,
+            PnlRecord.is_pinned == True,
+            PnlRecord.period_type == "daily",
+        )
     )
     pinned_records = {r.date.date(): r for r in result.scalars().all()}
 
-    # Delete non-pinned records
+    # Delete non-pinned daily records only
     result = await db.execute(
-        select(PnlRecord).where(PnlRecord.bot_id == bot_id, PnlRecord.is_pinned == False)
+        select(PnlRecord).where(
+            PnlRecord.bot_id == bot_id,
+            PnlRecord.is_pinned == False,
+            PnlRecord.period_type == "daily",
+        )
     )
     for record in result.scalars().all():
         await db.delete(record)

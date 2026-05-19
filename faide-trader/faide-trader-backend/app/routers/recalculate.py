@@ -172,8 +172,8 @@ async def recalculate(data: RecalculateRequest, db: AsyncSession = Depends(get_d
                     bot_pnls[bot.id] = sum(t.pnl for t in bot_trades)
                     bot_has_editable[bot.id] = any(not t.is_pinned for t in bot_trades)
 
-                # Only distribute to bots that have unpinned trades
-                editable_bots = [b for b in bots if bot_has_editable.get(b.id, False)]
+                # Only distribute to bots that are not pinned and have unpinned trades
+                editable_bots = [b for b in bots if not b.is_pinned and bot_has_editable.get(b.id, False)]
                 if not editable_bots:
                     raise HTTPException(
                         status_code=400,

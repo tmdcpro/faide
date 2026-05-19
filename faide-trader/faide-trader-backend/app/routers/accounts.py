@@ -140,6 +140,7 @@ async def update_account(
         exchange=account.exchange,
         initial_balance=account.initial_balance,
         current_balance=account.current_balance,
+        is_pinned=account.is_pinned,
         created_at=account.created_at,
         updated_at=account.updated_at,
     )
