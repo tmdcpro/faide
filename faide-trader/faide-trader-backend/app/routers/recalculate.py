@@ -663,13 +663,18 @@ async def update_portfolio_period_pnl(
         raise HTTPException(status_code=400, detail="All accounts are pinned")
 
     if data.pnl is not None:
-        # Even distribution across unpinned accounts
-        per_account = data.pnl / len(accounts)
+        # Pre-filter to accounts that have at least one unpinned bot
+        distributable: list[tuple] = []
         for account in accounts:
             bot_result = await db.execute(select(Bot).where(Bot.account_id == account.id))
             bots = [b for b in bot_result.scalars().all() if not b.is_pinned]
-            if not bots:
-                continue
+            if bots:
+                distributable.append((account, bots))
+        if not distributable:
+            raise HTTPException(status_code=400, detail="All bots are pinned across accounts")
+
+        per_account = data.pnl / len(distributable)
+        for account, bots in distributable:
             per_bot = per_account / len(bots)
             for bot in bots:
                 await handle_period_pnl_edit(db, bot.id, period_key, period_type, per_bot, [])
