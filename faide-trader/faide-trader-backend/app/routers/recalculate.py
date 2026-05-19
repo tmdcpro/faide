@@ -177,7 +177,7 @@ async def recalculate(data: RecalculateRequest, db: AsyncSession = Depends(get_d
                 if not editable_bots:
                     raise HTTPException(
                         status_code=400,
-                        detail="Cannot edit current_balance because all bot trades are pinned",
+                        detail="Cannot edit current_balance because all bots are locked or have all trades pinned",
                     )
 
                 editable_pnl = sum(bot_pnls[b.id] for b in editable_bots)
@@ -553,6 +553,7 @@ async def update_period_pnl(
                 PnlRecord.period_type == period_type,
             ).order_by(PnlRecord.date)
         )
+        matched = False
         for record in result.scalars().all():
             if period_type == "monthly":
                 rk = record.date.strftime("%Y-%m")
@@ -563,6 +564,25 @@ async def update_period_pnl(
                 rk = record.date.strftime("%Y-%m-%d")
             if rk == period_key:
                 record.is_pinned = data.is_pinned
+                matched = True
+
+        if not matched:
+            from datetime import datetime as dt
+            if period_type == "monthly":
+                date = dt.strptime(period_key + "-01", "%Y-%m-%d")
+            elif period_type == "daily":
+                date = dt.strptime(period_key, "%Y-%m-%d")
+            else:
+                date = dt.strptime(period_key + "-1", "%G-W%V-%u")
+            new_record = PnlRecord(
+                bot_id=bot_id,
+                date=date,
+                period_type=period_type,
+                pnl=0.0,
+                cumulative_pnl=0.0,
+                is_pinned=data.is_pinned,
+            )
+            db.add(new_record)
 
     # Recalculate everything
     bot_stats = await recalculate_bot_from_trades(db, bot_id)
