@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,6 +18,8 @@ from app.schemas import (
     PeriodPnlUpdate,
     TogglePinRequest,
     TogglePinResponse,
+    RegenerateRequest,
+    RegenerateResponse,
 )
 from app.services.calculation_engine import (
     recalculate_bot_from_trades,
@@ -28,6 +32,8 @@ from app.services.calculation_engine import (
     handle_period_pnl_edit,
     handle_period_stat_edit,
     get_pinned_periods,
+    regenerate_bot_trades,
+    regenerate_with_locked_stats,
 )
 
 # Allowlist of fields that can be edited via the recalculate endpoint
@@ -119,10 +125,27 @@ async def recalculate(data: RecalculateRequest, db: AsyncSession = Depends(get_d
                 data.field, data.new_value, data.pinned_fields,
             )
         else:
-            # Global stat editing
-            await handle_stat_edit(
-                db, bot.id, data.field, data.new_value, data.pinned_fields
-            )
+            # Global stat editing with constraint enforcement
+            locked_stats = bot.pinned_stats
+            other_locked = [f for f in locked_stats if f != data.field]
+
+            if other_locked:
+                # Capture pre-edit stats for constraint enforcement
+                trade_result = await db.execute(
+                    select(Trade).where(Trade.bot_id == bot.id).order_by(Trade.entry_time)
+                )
+                pre_trades = list(trade_result.scalars().all())
+                account_for_stats = await db.get(Account, bot.account_id)
+                ib = account_for_stats.initial_balance if account_for_stats else 10000.0
+                pre_edit_stats = calculate_stats_from_trades(pre_trades, ib)
+
+                await regenerate_with_locked_stats(
+                    db, bot.id, data.field, data.new_value, pre_edit_stats,
+                )
+            else:
+                await handle_stat_edit(
+                    db, bot.id, data.field, data.new_value, data.pinned_fields
+                )
         bot_stats = await recalculate_bot_from_trades(db, bot.id)
 
         account = await db.get(Account, bot.account_id)
@@ -772,3 +795,194 @@ async def update_portfolio_period_pnl(
     all_trades.sort(key=lambda t: t.entry_time)
     periods = aggregate_period_pnl(all_trades, period_type, total_initial if total_initial > 0 else 10000.0)
     return {"periods": [PeriodPnlResponse(**p) for p in periods], "portfolio_stats": portfolio_stats}
+
+
+# --- Regenerate Endpoints ---
+
+@router.post("/bots/{bot_id}/regenerate", response_model=RegenerateResponse)
+async def regenerate_bot(
+    bot_id: int,
+    data: RegenerateRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Regenerate trades for a bot while respecting all locked stat constraints.
+
+    Locked stats (from pinned_stats) are used as hard constraints.
+    Pinned trades are preserved; unpinned trades are deleted and replaced.
+    """
+    bot = await db.get(Bot, bot_id)
+    if not bot:
+        raise HTTPException(status_code=404, detail="Bot not found")
+
+    # Parse dates if provided
+    start_date = None
+    end_date = None
+    if data.start_date:
+        try:
+            start_date = datetime.fromisoformat(data.start_date)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid start_date format")
+    if data.end_date:
+        try:
+            end_date = datetime.fromisoformat(data.end_date)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid end_date format")
+
+    # Get constraints for the response
+    account = await db.get(Account, bot.account_id)
+    initial_balance = account.initial_balance if account else 10000.0
+
+    trade_result = await db.execute(
+        select(Trade).where(Trade.bot_id == bot_id).order_by(Trade.entry_time)
+    )
+    existing_trades = list(trade_result.scalars().all())
+    pre_stats = calculate_stats_from_trades(existing_trades, initial_balance)
+
+    constraints_applied: dict[str, float] = {}
+    for field in bot.pinned_stats:
+        if field in pre_stats:
+            constraints_applied[field] = pre_stats[field]
+
+    try:
+        stats = await regenerate_bot_trades(
+            db, bot_id,
+            num_trades=data.num_trades,
+            start_date=start_date,
+            end_date=end_date,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    await db.commit()
+
+    # Get final trade count
+    result = await db.execute(
+        select(Trade).where(Trade.bot_id == bot_id)
+    )
+    final_count = len(list(result.scalars().all()))
+
+    return RegenerateResponse(
+        generated=final_count,
+        bot_id=bot_id,
+        constraints_applied=constraints_applied,
+        bot_stats=stats,
+        final_stats=stats,
+    )
+
+
+@router.post("/accounts/{account_id}/regenerate", response_model=dict)
+async def regenerate_account(
+    account_id: int,
+    data: RegenerateRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Regenerate trades for all unlocked bots in an account."""
+    account = await db.get(Account, account_id)
+    if not account:
+        raise HTTPException(status_code=404, detail="Account not found")
+
+    result = await db.execute(select(Bot).where(Bot.account_id == account_id))
+    bots = list(result.scalars().all())
+
+    unlocked_bots = [b for b in bots if not b.is_pinned]
+    if not unlocked_bots:
+        raise HTTPException(status_code=400, detail="All bots are locked")
+
+    start_date = None
+    end_date = None
+    if data.start_date:
+        try:
+            start_date = datetime.fromisoformat(data.start_date)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid start_date format")
+    if data.end_date:
+        try:
+            end_date = datetime.fromisoformat(data.end_date)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid end_date format")
+
+    bot_results = {}
+    for bot in unlocked_bots:
+        stats = await regenerate_bot_trades(
+            db, bot.id,
+            num_trades=data.num_trades,
+            start_date=start_date,
+            end_date=end_date,
+        )
+        bot_results[bot.name] = stats
+
+    account_stats = await recalculate_account(db, account_id)
+    await db.commit()
+
+    return {
+        "account_id": account_id,
+        "bots_regenerated": len(unlocked_bots),
+        "bots_skipped_locked": len(bots) - len(unlocked_bots),
+        "bot_results": bot_results,
+        "account_stats": account_stats,
+    }
+
+
+@router.post("/portfolios/{portfolio_id}/regenerate", response_model=dict)
+async def regenerate_portfolio(
+    portfolio_id: int,
+    data: RegenerateRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Regenerate trades for all unlocked bots across all unlocked accounts in a portfolio."""
+    result = await db.execute(
+        select(Account).where(Account.portfolio_id == portfolio_id)
+    )
+    accounts = list(result.scalars().all())
+    if not accounts:
+        raise HTTPException(status_code=404, detail="Portfolio not found or has no accounts")
+
+    start_date = None
+    end_date = None
+    if data.start_date:
+        try:
+            start_date = datetime.fromisoformat(data.start_date)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid start_date format")
+    if data.end_date:
+        try:
+            end_date = datetime.fromisoformat(data.end_date)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid end_date format")
+
+    total_regenerated = 0
+    total_skipped = 0
+
+    for account in accounts:
+        if account.is_pinned:
+            bot_result = await db.execute(select(Bot).where(Bot.account_id == account.id))
+            total_skipped += len(list(bot_result.scalars().all()))
+            continue
+
+        bot_result = await db.execute(select(Bot).where(Bot.account_id == account.id))
+        bots = list(bot_result.scalars().all())
+
+        for bot in bots:
+            if bot.is_pinned:
+                total_skipped += 1
+                continue
+            await regenerate_bot_trades(
+                db, bot.id,
+                num_trades=data.num_trades,
+                start_date=start_date,
+                end_date=end_date,
+            )
+            total_regenerated += 1
+
+        await recalculate_account(db, account.id)
+
+    portfolio_stats = await recalculate_portfolio(db, portfolio_id)
+    await db.commit()
+
+    return {
+        "portfolio_id": portfolio_id,
+        "bots_regenerated": total_regenerated,
+        "bots_skipped_locked": total_skipped,
+        "portfolio_stats": portfolio_stats,
+    }

@@ -114,7 +114,7 @@ function StatItemEditable({
           <button
             onClick={() => onTogglePin(field)}
             className={`opacity-0 group-hover:opacity-100 transition-opacity ${isPinned ? 'text-yellow-400 !opacity-100' : 'text-gray-500 hover:text-yellow-400'}`}
-            title={isPinned ? 'Unlock (value will recalculate)' : 'Lock (value stays fixed)'}
+            title={isPinned ? `Unlock (value will recalculate freely)` : `Lock at ${value} (stays fixed during regeneration)`}
           >
             {isPinned ? <Lock size={10} /> : <Unlock size={10} />}
           </button>
@@ -128,7 +128,7 @@ function StatItemEditable({
           }
         }}
         className={`text-sm font-mono font-medium ${color} ${canEdit && !isPinned ? 'cursor-pointer hover:bg-slate-700 rounded px-0.5 transition-colors' : ''} ${isPinned ? 'opacity-75' : ''}`}
-        title={isPinned ? 'Locked — unlock to edit' : canEdit ? 'Click to edit & back-calculate' : undefined}
+        title={isPinned ? `Locked at ${value} — this value is preserved during regeneration` : canEdit ? 'Click to edit & back-calculate' : undefined}
       >
         {value}
         {isPinned && <Lock size={10} className="inline ml-1 text-yellow-400" />}

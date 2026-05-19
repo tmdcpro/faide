@@ -54,6 +54,8 @@ function App() {
   const [showCreate, setShowCreate] = useState<string | null>(null);
   const [showMarketImport, setShowMarketImport] = useState(false);
   const [showGenerateTrades, setShowGenerateTrades] = useState(false);
+  const [showRegenerate, setShowRegenerate] = useState(false);
+  const [regenerating, setRegenerating] = useState(false);
   const [currentPortfolio, setCurrentPortfolio] = useState<Portfolio | null>(null);
   const [currentAccount, setCurrentAccount] = useState<Account | null>(null);
   const [currentBot, setCurrentBot] = useState<Bot | null>(null);
@@ -578,6 +580,13 @@ function App() {
               <RefreshCw size={16} />
             </button>
             <button
+              onClick={() => setShowRegenerate(true)}
+              className="flex items-center gap-2 px-4 py-2 bg-purple-600 hover:bg-purple-500 rounded-lg text-sm font-medium transition-colors"
+              title="Regenerate trades while keeping locked stat values fixed"
+            >
+              <RefreshCw size={16} /> Regenerate
+            </button>
+            <button
               onClick={() => setShowGenerateTrades(true)}
               className="flex items-center gap-2 px-4 py-2 bg-yellow-600 hover:bg-yellow-500 rounded-lg text-sm font-medium transition-colors"
             >
@@ -665,6 +674,81 @@ function App() {
             onClose={() => setShowGenerateTrades(false)}
             onGenerated={loadData}
           />
+        )}
+
+        {showRegenerate && currentBot && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+            <div className="bg-slate-800 rounded-lg border border-slate-700 p-6 w-full max-w-md">
+              <h2 className="text-lg font-bold mb-4">Regenerate Stats</h2>
+              <p className="text-sm text-gray-400 mb-4">
+                This will delete all unpinned trades and generate new ones.
+                {currentBot.pinned_stats.length > 0 ? (
+                  <span> Locked values will be preserved as constraints.</span>
+                ) : (
+                  <span> No stats are currently locked — all values will be regenerated freely. Lock stats first to preserve specific values.</span>
+                )}
+              </p>
+
+              {currentBot.pinned_stats.length > 0 && stats && (
+                <div className="bg-slate-700/50 rounded-lg p-3 mb-4">
+                  <p className="text-xs text-yellow-400 font-medium mb-2 flex items-center gap-1">
+                    <Lock size={12} /> Values that will be preserved:
+                  </p>
+                  <div className="space-y-1">
+                    {currentBot.pinned_stats.map((field) => {
+                      const value = (stats as Record<string, number>)[field];
+                      const label = field.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+                      return (
+                        <div key={field} className="flex justify-between text-sm">
+                          <span className="text-gray-300">{label}</span>
+                          <span className="text-yellow-400 font-mono">
+                            {typeof value === 'number' ? value.toLocaleString(undefined, { maximumFractionDigits: 4 }) : 'N/A'}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              <div className="flex justify-end gap-3">
+                <button
+                  onClick={() => setShowRegenerate(false)}
+                  className="px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg text-sm transition-colors"
+                  disabled={regenerating}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={async () => {
+                    setRegenerating(true);
+                    try {
+                      await api.regenerateBot(currentBot.id);
+                      loadData();
+                    } catch (e) {
+                      console.error('Regeneration failed:', e);
+                      alert(`Regeneration failed: ${e instanceof Error ? e.message : 'Unknown error'}`);
+                    } finally {
+                      setRegenerating(false);
+                      setShowRegenerate(false);
+                    }
+                  }}
+                  disabled={regenerating}
+                  className="flex items-center gap-2 px-4 py-2 bg-purple-600 hover:bg-purple-500 disabled:bg-purple-800 disabled:text-gray-400 rounded-lg text-sm font-medium transition-colors"
+                >
+                  {regenerating ? (
+                    <>
+                      <RefreshCw size={14} className="animate-spin" /> Regenerating...
+                    </>
+                  ) : (
+                    <>
+                      <RefreshCw size={14} /> Regenerate
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
         )}
       </div>
     );

@@ -282,4 +282,18 @@ export const api = {
     request<{ success: boolean; entity_type: string; entity_id: number; field?: string; pinned: boolean }>(
       '/api/toggle-pin', { method: 'POST', body: JSON.stringify(data) }
     ),
+
+  // Regenerate
+  regenerateBot: (botId: number, data?: { num_trades?: number; start_date?: string; end_date?: string }) =>
+    request<{ generated: number; bot_id: number; constraints_applied: Record<string, number>; bot_stats: Record<string, number>; final_stats: Record<string, number> }>(
+      `/api/bots/${botId}/regenerate`, { method: 'POST', body: JSON.stringify(data || {}) }
+    ),
+  regenerateAccount: (accountId: number, data?: { num_trades?: number; start_date?: string; end_date?: string }) =>
+    request<{ account_id: number; bots_regenerated: number; bots_skipped_locked: number; account_stats: Record<string, number> }>(
+      `/api/accounts/${accountId}/regenerate`, { method: 'POST', body: JSON.stringify(data || {}) }
+    ),
+  regeneratePortfolio: (portfolioId: number, data?: { num_trades?: number; start_date?: string; end_date?: string }) =>
+    request<{ portfolio_id: number; bots_regenerated: number; bots_skipped_locked: number; portfolio_stats: Record<string, number> }>(
+      `/api/portfolios/${portfolioId}/regenerate`, { method: 'POST', body: JSON.stringify(data || {}) }
+    ),
 };

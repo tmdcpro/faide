@@ -209,6 +209,20 @@ class TradeGenerateResponse(BaseModel):
     end_date: str
 
 
+class RegenerateRequest(BaseModel):
+    num_trades: Optional[int] = None
+    start_date: Optional[str] = None  # ISO date string
+    end_date: Optional[str] = None  # ISO date string
+
+
+class RegenerateResponse(BaseModel):
+    generated: int
+    bot_id: int
+    constraints_applied: dict[str, float] = {}
+    bot_stats: dict = {}
+    final_stats: dict = {}
+
+
 # --- Market Data ---
 class MarketDataImport(BaseModel):
     exchange: str
