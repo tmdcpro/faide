@@ -32,8 +32,10 @@ def _migrate_columns(conn):
 
     migrations = [
         ("accounts", "is_pinned", "BOOLEAN DEFAULT 0"),
+        ("accounts", "pinned_stats", "VARCHAR DEFAULT '[]'"),
         ("bots", "is_pinned", "BOOLEAN DEFAULT 0"),
         ("bots", "pinned_stats", "VARCHAR DEFAULT '[]'"),
+        ("portfolios", "pinned_stats", "VARCHAR DEFAULT '[]'"),
     ]
     for table, column, col_type in migrations:
         try:

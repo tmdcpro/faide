@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.database import get_db
-from app.models.portfolio import Trade, Bot, Account, PnlRecord
+from app.models.portfolio import Trade, Bot, Account, Portfolio, PnlRecord
 from app.schemas import (
     RecalculateRequest,
     RecalculateResponse,
@@ -227,6 +227,40 @@ async def recalculate(data: RecalculateRequest, db: AsyncSession = Depends(get_d
 
         return RecalculateResponse(account_stats=account_stats)
 
+    elif data.entity_type == "portfolio":
+        portfolio_result = await db.execute(
+            select(Portfolio).where(Portfolio.id == data.entity_id).options(selectinload(Portfolio.accounts))
+        )
+        portfolio = portfolio_result.scalar_one_or_none()
+        if not portfolio:
+            raise HTTPException(status_code=404, detail="Portfolio not found")
+
+        if data.field == "total_pnl":
+            # Distribute across accounts
+            total_current_pnl = sum(a.current_balance - a.initial_balance for a in portfolio.accounts)
+            editable_accounts = [a for a in portfolio.accounts if not a.is_pinned]
+            if not editable_accounts:
+                raise HTTPException(status_code=400, detail="All accounts are frozen")
+
+            editable_pnl = sum(a.current_balance - a.initial_balance for a in editable_accounts)
+            pinned_pnl = sum(a.current_balance - a.initial_balance for a in portfolio.accounts if a.is_pinned)
+            distributable_target = data.new_value - pinned_pnl
+
+            for a in editable_accounts:
+                a_pnl = a.current_balance - a.initial_balance
+                share = a_pnl / editable_pnl if editable_pnl != 0 else 1.0 / len(editable_accounts)
+                new_balance = a.initial_balance + distributable_target * share
+                a.current_balance = round(new_balance, 4)
+
+            # Cascade recalculate
+            for a in editable_accounts:
+                await recalculate_account(db, a.id)
+
+        portfolio_stats = await recalculate_portfolio(db, portfolio.id)
+        await db.commit()
+
+        return RecalculateResponse(account_stats=portfolio_stats)
+
     raise HTTPException(status_code=400, detail=f"Unsupported entity_type: {data.entity_type}")
 
 
@@ -271,11 +305,42 @@ async def toggle_pin(data: TogglePinRequest, db: AsyncSession = Depends(get_db))
         account = await db.get(Account, data.entity_id)
         if not account:
             raise HTTPException(status_code=404, detail="Account not found")
-        account.is_pinned = data.pinned
+
+        if data.field:
+            current = account.pinned_stats
+            if data.pinned and data.field not in current:
+                current.append(data.field)
+            elif not data.pinned and data.field in current:
+                current.remove(data.field)
+            account.pinned_stats = current
+        else:
+            account.is_pinned = data.pinned
+
         await db.commit()
         return TogglePinResponse(
             success=True, entity_type="account", entity_id=data.entity_id,
-            pinned=data.pinned,
+            field=data.field, pinned=data.pinned,
+        )
+
+    elif data.entity_type == "portfolio":
+        portfolio = await db.get(Portfolio, data.entity_id)
+        if not portfolio:
+            raise HTTPException(status_code=404, detail="Portfolio not found")
+
+        if data.field:
+            current = portfolio.pinned_stats
+            if data.pinned and data.field not in current:
+                current.append(data.field)
+            elif not data.pinned and data.field in current:
+                current.remove(data.field)
+            portfolio.pinned_stats = current
+        else:
+            raise HTTPException(status_code=400, detail="Portfolio entity-level pinning not supported; use field-level pinning")
+
+        await db.commit()
+        return TogglePinResponse(
+            success=True, entity_type="portfolio", entity_id=data.entity_id,
+            field=data.field, pinned=data.pinned,
         )
 
     elif data.entity_type == "period":

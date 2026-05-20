@@ -18,6 +18,7 @@ class PortfolioResponse(BaseModel):
     id: int
     name: str
     description: str
+    pinned_stats: list[str] = []
     created_at: datetime
     updated_at: datetime
     account_count: int = 0
@@ -50,6 +51,7 @@ class AccountResponse(BaseModel):
     initial_balance: float
     current_balance: float
     is_pinned: bool = False
+    pinned_stats: list[str] = []
     created_at: datetime
     updated_at: datetime
     bot_count: int = 0

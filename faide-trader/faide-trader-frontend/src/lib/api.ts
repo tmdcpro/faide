@@ -17,6 +17,7 @@ export interface Portfolio {
   id: number;
   name: string;
   description: string;
+  pinned_stats: string[];
   created_at: string;
   updated_at: string;
   account_count: number;
@@ -32,6 +33,7 @@ export interface Account {
   initial_balance: number;
   current_balance: number;
   is_pinned: boolean;
+  pinned_stats: string[];
   created_at: string;
   updated_at: string;
   bot_count: number;
@@ -138,7 +140,7 @@ export interface PeriodPnl {
 }
 
 export interface TogglePinRequest {
-  entity_type: 'bot' | 'account' | 'trade' | 'period';
+  entity_type: 'bot' | 'account' | 'portfolio' | 'trade' | 'period';
   entity_id: number;
   field?: string;
   period_key?: string;

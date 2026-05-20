@@ -29,10 +29,22 @@ class Portfolio(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     name = Column(String, nullable=False)
     description = Column(String, default="")
+    _pinned_stats = Column("pinned_stats", String, default="[]")
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     accounts = relationship("Account", back_populates="portfolio", cascade="all, delete-orphan")
+
+    @property
+    def pinned_stats(self) -> list[str]:
+        try:
+            return json.loads(self._pinned_stats) if self._pinned_stats else []
+        except (json.JSONDecodeError, TypeError):
+            return []
+
+    @pinned_stats.setter
+    def pinned_stats(self, value: list[str]) -> None:
+        self._pinned_stats = json.dumps(value if value else [])
 
 
 class Account(Base):
@@ -45,11 +57,23 @@ class Account(Base):
     initial_balance = Column(Float, default=10000.0)
     current_balance = Column(Float, default=10000.0)
     is_pinned = Column(Boolean, default=False)
+    _pinned_stats = Column("pinned_stats", String, default="[]")
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     portfolio = relationship("Portfolio", back_populates="accounts")
     bots = relationship("Bot", back_populates="account", cascade="all, delete-orphan")
+
+    @property
+    def pinned_stats(self) -> list[str]:
+        try:
+            return json.loads(self._pinned_stats) if self._pinned_stats else []
+        except (json.JSONDecodeError, TypeError):
+            return []
+
+    @pinned_stats.setter
+    def pinned_stats(self, value: list[str]) -> None:
+        self._pinned_stats = json.dumps(value if value else [])
 
 
 class Bot(Base):

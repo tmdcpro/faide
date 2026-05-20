@@ -8,7 +8,6 @@ import {
   type Stats,
   type PnlRecord,
 } from '@/lib/api';
-import { StatsCard } from '@/components/StatsCard';
 import { EditableStatsCard } from '@/components/EditableStatsCard';
 import { TradeTable } from '@/components/TradeTable';
 import { CreateDialog } from '@/components/CreateDialog';
@@ -269,7 +268,14 @@ function App() {
 
       {stats && stats.total_trades > 0 && (
         <>
-          <StatsCard stats={stats} title="Portfolio Statistics" />
+          <EditableStatsCard
+            stats={stats}
+            title="Portfolio Statistics"
+            entityType="portfolio"
+            entityId={view.portfolioId}
+            pinnedStats={currentPortfolio?.pinned_stats || []}
+            onRecalculated={loadData}
+          />
           <div className="mt-4">
             <PeriodPnlView entityType="portfolio" entityId={view.portfolioId} onRecalculated={loadData} />
           </div>
@@ -387,7 +393,7 @@ function App() {
                 {currentAccount?.initial_balance.toLocaleString()}
                 {currentAccount?.is_pinned && (
                   <span className="text-yellow-400 ml-1">
-                    <Lock size={12} className="inline" /> Locked
+                    <Lock size={12} className="inline" /> Frozen
                   </span>
                 )}
               </p>
@@ -409,10 +415,10 @@ function App() {
                   ? 'bg-yellow-600/20 text-yellow-400 hover:bg-yellow-600/30'
                   : 'bg-slate-700 text-gray-400 hover:bg-slate-600'
               }`}
-              title={currentAccount?.is_pinned ? 'Unlock account' : 'Lock account'}
+              title={currentAccount?.is_pinned ? 'Unfreeze account — portfolio edits will affect this account' : 'Freeze account — protect from portfolio recalculation'}
             >
               {currentAccount?.is_pinned ? <Lock size={14} /> : <Unlock size={14} />}
-              {currentAccount?.is_pinned ? 'Locked' : 'Lock'}
+              {currentAccount?.is_pinned ? 'Frozen' : 'Freeze'}
             </button>
             <button onClick={loadData} className="p-2 hover:bg-slate-700 rounded-lg transition-colors">
               <RefreshCw size={16} />
@@ -439,7 +445,14 @@ function App() {
 
         {stats && stats.total_trades > 0 && (
           <>
-            <StatsCard stats={stats} title="Account Statistics" />
+            <EditableStatsCard
+              stats={stats}
+              title="Account Statistics"
+              entityType="account"
+              entityId={view.accountId}
+              pinnedStats={currentAccount?.pinned_stats || []}
+              onRecalculated={loadData}
+            />
             <div className="mt-4">
               <PeriodPnlView entityType="account" entityId={view.accountId} onRecalculated={loadData} />
             </div>
@@ -549,7 +562,7 @@ function App() {
                 </span>
                 {currentBot?.is_pinned && (
                   <span className="text-yellow-400 ml-1">
-                    <Lock size={12} className="inline" /> Locked
+                    <Lock size={12} className="inline" /> Frozen
                   </span>
                 )}
               </p>
@@ -571,10 +584,10 @@ function App() {
                   ? 'bg-yellow-600/20 text-yellow-400 hover:bg-yellow-600/30'
                   : 'bg-slate-700 text-gray-400 hover:bg-slate-600'
               }`}
-              title={currentBot?.is_pinned ? 'Unlock bot (allow recalculation)' : 'Lock bot (protect from recalculation)'}
+              title={currentBot?.is_pinned ? 'Unfreeze bot — parent account edits will affect this bot' : 'Freeze bot — protect from parent account recalculation'}
             >
               {currentBot?.is_pinned ? <Lock size={14} /> : <Unlock size={14} />}
-              {currentBot?.is_pinned ? 'Locked' : 'Lock'}
+              {currentBot?.is_pinned ? 'Frozen' : 'Freeze'}
             </button>
             <button onClick={loadData} className="p-2 hover:bg-slate-700 rounded-lg transition-colors">
               <RefreshCw size={16} />
@@ -696,7 +709,7 @@ function App() {
                   </p>
                   <div className="space-y-1">
                     {currentBot.pinned_stats.map((field) => {
-                      const value = (stats as Record<string, number>)[field];
+                      const value = (stats as unknown as Record<string, number>)[field];
                       const label = field.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
                       return (
                         <div key={field} className="flex justify-between text-sm">

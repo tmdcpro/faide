@@ -39,6 +39,7 @@ async def list_accounts(portfolio_id: int, db: AsyncSession = Depends(get_db)):
             initial_balance=a.initial_balance,
             current_balance=a.current_balance,
             is_pinned=a.is_pinned,
+            pinned_stats=a.pinned_stats,
             created_at=a.created_at,
             updated_at=a.updated_at,
             bot_count=len(a.bots),
@@ -103,6 +104,7 @@ async def get_account(account_id: int, db: AsyncSession = Depends(get_db)):
         initial_balance=account.initial_balance,
         current_balance=account.current_balance,
         is_pinned=account.is_pinned,
+        pinned_stats=account.pinned_stats,
         created_at=account.created_at,
         updated_at=account.updated_at,
         bot_count=len(account.bots),
@@ -141,6 +143,7 @@ async def update_account(
         initial_balance=account.initial_balance,
         current_balance=account.current_balance,
         is_pinned=account.is_pinned,
+        pinned_stats=account.pinned_stats,
         created_at=account.created_at,
         updated_at=account.updated_at,
     )

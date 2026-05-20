@@ -59,11 +59,11 @@ function StatItemEditable({
       return;
     }
 
-    if (entityType === 'bot' && entityId) {
+    if (entityType && entityId) {
       setSaving(true);
       try {
         await api.recalculate({
-          entity_type: 'bot',
+          entity_type: entityType as 'bot' | 'account' | 'portfolio',
           entity_id: entityId,
           field,
           new_value: newVal,
@@ -105,7 +105,7 @@ function StatItemEditable({
     );
   }
 
-  const canEdit = entityType === 'bot' && entityId;
+  const canEdit = entityType && entityId;
   return (
     <div className="flex flex-col group">
       <div className="flex items-center gap-1">
@@ -122,13 +122,13 @@ function StatItemEditable({
       </div>
       <span
         onClick={() => {
-          if (canEdit && !isPinned) {
+          if (canEdit) {
             setEditValue(String(rawValue));
             setEditing(true);
           }
         }}
-        className={`text-sm font-mono font-medium ${color} ${canEdit && !isPinned ? 'cursor-pointer hover:bg-slate-700 rounded px-0.5 transition-colors' : ''} ${isPinned ? 'opacity-75' : ''}`}
-        title={isPinned ? `Locked at ${value} — this value is preserved during regeneration` : canEdit ? 'Click to edit & back-calculate' : undefined}
+        className={`text-sm font-mono font-medium ${color} ${canEdit ? 'cursor-pointer hover:bg-slate-700 rounded px-0.5 transition-colors' : ''}`}
+        title={isPinned ? `Locked at ${value} — click to edit constraint value` : canEdit ? 'Click to edit & back-calculate' : undefined}
       >
         {value}
         {isPinned && <Lock size={10} className="inline ml-1 text-yellow-400" />}
@@ -139,11 +139,11 @@ function StatItemEditable({
 
 export function EditableStatsCard({ stats, title, entityType, entityId, pinnedStats = [], onRecalculated }: EditableStatsCardProps) {
   const handleTogglePin = async (field: string) => {
-    if (entityType !== 'bot' || !entityId) return;
+    if (!entityType || !entityId) return;
     const isPinned = pinnedStats.includes(field);
     try {
       await api.togglePin({
-        entity_type: 'bot',
+        entity_type: entityType,
         entity_id: entityId,
         field,
         pinned: !isPinned,
@@ -154,7 +154,7 @@ export function EditableStatsCard({ stats, title, entityType, entityId, pinnedSt
     }
   };
 
-  const commonProps = { entityType, entityId, onRecalculated, onTogglePin: entityType === 'bot' ? handleTogglePin : undefined };
+  const commonProps = { entityType, entityId, onRecalculated, onTogglePin: entityType ? handleTogglePin : undefined };
 
   const isFieldPinned = (field: string) => pinnedStats.includes(field);
 
@@ -163,8 +163,8 @@ export function EditableStatsCard({ stats, title, entityType, entityId, pinnedSt
       {title && (
         <div className="flex items-center justify-between mb-3">
           <h3 className="text-sm font-medium text-gray-400">{title}</h3>
-          {entityType === 'bot' && (
-            <span className="text-xs text-gray-500">Click to edit · Lock to protect</span>
+          {entityType && (
+            <span className="text-xs text-gray-500">Click to edit · Hover to lock/unlock</span>
           )}
         </div>
       )}
