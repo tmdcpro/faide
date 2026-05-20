@@ -236,30 +236,53 @@ async def recalculate(data: RecalculateRequest, db: AsyncSession = Depends(get_d
             raise HTTPException(status_code=404, detail="Portfolio not found")
 
         if data.field == "total_pnl":
-            # Distribute across accounts
-            total_current_pnl = sum(a.current_balance - a.initial_balance for a in portfolio.accounts)
+            # Distribute target PnL across accounts, then cascade to trades
             editable_accounts = [a for a in portfolio.accounts if not a.is_pinned]
             if not editable_accounts:
                 raise HTTPException(status_code=400, detail="All accounts are frozen")
 
-            editable_pnl = sum(a.current_balance - a.initial_balance for a in editable_accounts)
             pinned_pnl = sum(a.current_balance - a.initial_balance for a in portfolio.accounts if a.is_pinned)
             distributable_target = data.new_value - pinned_pnl
+            editable_pnl = sum(a.current_balance - a.initial_balance for a in editable_accounts)
 
             for a in editable_accounts:
                 a_pnl = a.current_balance - a.initial_balance
                 share = a_pnl / editable_pnl if editable_pnl != 0 else 1.0 / len(editable_accounts)
-                new_balance = a.initial_balance + distributable_target * share
-                a.current_balance = round(new_balance, 4)
+                account_target_pnl = distributable_target * share
 
-            # Cascade recalculate
-            for a in editable_accounts:
+                # Cascade to bots/trades (same pattern as account current_balance edit)
+                bot_result = await db.execute(select(Bot).where(Bot.account_id == a.id))
+                bots = list(bot_result.scalars().all())
+                if bots:
+                    bot_pnls: dict[int, float] = {}
+                    bot_has_editable: dict[int, bool] = {}
+                    for bot in bots:
+                        trade_result = await db.execute(select(Trade).where(Trade.bot_id == bot.id))
+                        bot_trades = list(trade_result.scalars().all())
+                        bot_pnls[bot.id] = sum(t.pnl for t in bot_trades)
+                        bot_has_editable[bot.id] = any(not t.is_pinned for t in bot_trades)
+
+                    editable_bots = [b for b in bots if not b.is_pinned and bot_has_editable.get(b.id, False)]
+                    if editable_bots:
+                        eb_pnl = sum(bot_pnls[b.id] for b in editable_bots)
+                        pinned_bot_pnl = sum(bot_pnls[b.id] for b in bots if b not in editable_bots)
+                        bot_distributable = account_target_pnl - pinned_bot_pnl
+
+                        if eb_pnl != 0:
+                            for bot in editable_bots:
+                                bot_share = bot_pnls[bot.id] / eb_pnl
+                                await handle_top_down_edit(db, bot.id, bot_distributable * bot_share, data.pinned_fields)
+                        else:
+                            per_bot = bot_distributable / len(editable_bots)
+                            for bot in editable_bots:
+                                await handle_top_down_edit(db, bot.id, per_bot, data.pinned_fields)
+
                 await recalculate_account(db, a.id)
 
         portfolio_stats = await recalculate_portfolio(db, portfolio.id)
         await db.commit()
 
-        return RecalculateResponse(account_stats=portfolio_stats)
+        return RecalculateResponse(portfolio_stats=portfolio_stats)
 
     raise HTTPException(status_code=400, detail=f"Unsupported entity_type: {data.entity_type}")
 
