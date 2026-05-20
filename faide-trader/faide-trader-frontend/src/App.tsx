@@ -274,6 +274,7 @@ function App() {
             entityType="portfolio"
             entityId={view.portfolioId}
             pinnedStats={currentPortfolio?.pinned_stats || []}
+            editableFields={['total_pnl']}
             onRecalculated={loadData}
           />
           <div className="mt-4">
@@ -451,6 +452,7 @@ function App() {
               entityType="account"
               entityId={view.accountId}
               pinnedStats={currentAccount?.pinned_stats || []}
+              editableFields={['current_balance', 'initial_balance']}
               onRecalculated={loadData}
             />
             <div className="mt-4">

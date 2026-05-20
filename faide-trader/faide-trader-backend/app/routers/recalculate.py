@@ -177,6 +177,10 @@ async def recalculate(data: RecalculateRequest, db: AsyncSession = Depends(get_d
         if not account:
             raise HTTPException(status_code=404, detail="Account not found")
 
+        supported_account_fields = {"current_balance", "initial_balance"}
+        if data.field not in supported_account_fields:
+            raise HTTPException(status_code=400, detail=f"Field '{data.field}' is not editable on accounts. Supported: {sorted(supported_account_fields)}")
+
         if data.field == "current_balance":
             # Back-calculate: target total PnL = new_balance - initial_balance
             # Then distribute across all bots' trades to make accounting consistent
@@ -234,6 +238,10 @@ async def recalculate(data: RecalculateRequest, db: AsyncSession = Depends(get_d
         portfolio = portfolio_result.scalar_one_or_none()
         if not portfolio:
             raise HTTPException(status_code=404, detail="Portfolio not found")
+
+        supported_portfolio_fields = {"total_pnl"}
+        if data.field not in supported_portfolio_fields:
+            raise HTTPException(status_code=400, detail=f"Field '{data.field}' is not editable on portfolios. Supported: {sorted(supported_portfolio_fields)}")
 
         if data.field == "total_pnl":
             # Distribute target PnL across accounts, then cascade to trades
