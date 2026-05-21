@@ -85,6 +85,7 @@ class Account(Base):
 
     portfolio = relationship("Portfolio", back_populates="accounts")
     bots = relationship("Bot", back_populates="account", cascade="all, delete-orphan")
+    transactions = relationship("Transaction", back_populates="account", cascade="all, delete-orphan")
 
     @property
     def pinned_stats(self) -> list[str]:
@@ -237,6 +238,21 @@ class PnlRecord(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     bot = relationship("Bot", back_populates="pnl_records")
+
+
+class Transaction(Base):
+    __tablename__ = "transactions"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    account_id = Column(Integer, ForeignKey("accounts.id"), nullable=False)
+    type = Column(String, nullable=False)  # "deposit" or "withdrawal"
+    amount = Column(Float, nullable=False)
+    note = Column(String, default="")
+    date = Column(DateTime, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    account = relationship("Account", back_populates="transactions")
 
 
 class MarketData(Base):

@@ -20,6 +20,7 @@ import { GenerateTradesDialog } from '@/components/GenerateTradesDialog';
 import { CreateBotDialog } from '@/components/CreateBotDialog';
 import { EditBotDialog } from '@/components/EditBotDialog';
 import { SymbolPnlView } from '@/components/SymbolPnlView';
+import { TransactionsView } from '@/components/TransactionsView';
 import {
   ChevronRight,
   Plus,
@@ -298,6 +299,12 @@ function App() {
             <PeriodPnlView entityType="portfolio" entityId={view.portfolioId} onRecalculated={loadData} />
           </div>
         </>
+      )}
+
+      {view.type === 'portfolio' && (
+        <div className="mt-4">
+          <TransactionsView portfolioId={view.portfolioId} />
+        </div>
       )}
 
       <div className="mt-6">
@@ -611,6 +618,10 @@ function App() {
             </div>
           </>
         )}
+
+        <div className="mt-4">
+          <TransactionsView accountId={view.accountId} onChanged={loadData} />
+        </div>
 
         <div className="mt-6">
           <h2 className="text-lg font-semibold mb-4">Bots / Strategies</h2>

@@ -183,6 +183,17 @@ export interface SymbolPnl {
   avg_pnl: number;
 }
 
+export interface Transaction {
+  id: number;
+  account_id: number;
+  type: 'deposit' | 'withdrawal';
+  amount: number;
+  note: string;
+  date: string;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface RecalculateResult {
   updated_trades: Trade[];
   updated_pnl_records: PnlRecord[];
@@ -305,4 +316,16 @@ export const api = {
     request<{ portfolio_id: number; bots_regenerated: number; bots_skipped_locked: number; portfolio_stats: Record<string, number> }>(
       `/api/portfolios/${portfolioId}/regenerate`, { method: 'POST', body: JSON.stringify(data || {}) }
     ),
+
+  // Transactions
+  listTransactions: (accountId: number) =>
+    request<Transaction[]>(`/api/accounts/${accountId}/transactions`),
+  listPortfolioTransactions: (portfolioId: number) =>
+    request<Transaction[]>(`/api/portfolios/${portfolioId}/transactions`),
+  createTransaction: (accountId: number, data: { type: string; amount: number; note?: string; date: string }) =>
+    request<Transaction>(`/api/accounts/${accountId}/transactions`, { method: 'POST', body: JSON.stringify(data) }),
+  updateTransaction: (txId: number, data: Partial<Transaction>) =>
+    request<Transaction>(`/api/transactions/${txId}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteTransaction: (txId: number) =>
+    request<{ status: string }>(`/api/transactions/${txId}`, { method: 'DELETE' }),
 };

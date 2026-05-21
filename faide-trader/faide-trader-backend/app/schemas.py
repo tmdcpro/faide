@@ -331,6 +331,34 @@ class PeriodPnlUpdate(BaseModel):
     is_pinned: Optional[bool] = None
 
 
+# --- Transactions ---
+class TransactionCreate(BaseModel):
+    type: str  # "deposit" or "withdrawal"
+    amount: float
+    note: str = ""
+    date: str  # ISO date string
+
+
+class TransactionUpdate(BaseModel):
+    type: Optional[str] = None
+    amount: Optional[float] = None
+    note: Optional[str] = None
+    date: Optional[str] = None
+
+
+class TransactionResponse(BaseModel):
+    id: int
+    account_id: int
+    type: str
+    amount: float
+    note: str
+    date: datetime
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
 # --- Stats ---
 class StatsResponse(BaseModel):
     total_pnl: float = 0.0
