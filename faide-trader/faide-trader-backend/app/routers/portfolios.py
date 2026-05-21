@@ -4,9 +4,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.database import get_db
-from app.models.portfolio import Portfolio, Account, Bot, Trade
+from app.models.portfolio import Portfolio, Account, Bot, Trade, Transaction
 from app.schemas import PortfolioCreate, PortfolioUpdate, PortfolioResponse
-from app.services.calculation_engine import recalculate_portfolio
+from app.services.calculation_engine import recalculate_portfolio, get_account_net_deposits
 
 router = APIRouter(prefix="/api/portfolios", tags=["portfolios"])
 
@@ -23,7 +23,8 @@ async def list_portfolios(db: AsyncSession = Depends(get_db)):
         total_pnl = 0.0
         total_balance = 0.0
         for a in p.accounts:
-            total_pnl += (a.current_balance - a.initial_balance)
+            net_deps = await get_account_net_deposits(db, a.id)
+            total_pnl += (a.current_balance - a.initial_balance - net_deps)
             total_balance += a.current_balance
 
         responses.append(PortfolioResponse(
@@ -70,7 +71,8 @@ async def get_portfolio(portfolio_id: int, db: AsyncSession = Depends(get_db)):
     total_pnl = 0.0
     total_balance = 0.0
     for a in portfolio.accounts:
-        total_pnl += (a.current_balance - a.initial_balance)
+        net_deps = await get_account_net_deposits(db, a.id)
+        total_pnl += (a.current_balance - a.initial_balance - net_deps)
         total_balance += a.current_balance
 
     return PortfolioResponse(

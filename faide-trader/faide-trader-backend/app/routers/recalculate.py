@@ -23,6 +23,7 @@ from app.schemas import (
     RegenerateRequest,
     RegenerateResponse,
 )
+from app.services.calculation_engine import get_account_net_deposits
 from app.services.calculation_engine import (
     recalculate_bot_from_trades,
     recalculate_account,
@@ -184,9 +185,10 @@ async def recalculate(data: RecalculateRequest, db: AsyncSession = Depends(get_d
             raise HTTPException(status_code=400, detail=f"Field '{data.field}' is not editable on accounts. Supported: {sorted(supported_account_fields)}")
 
         if data.field == "current_balance":
-            # Back-calculate: target total PnL = new_balance - initial_balance
+            # Back-calculate: target total PnL = new_balance - initial_balance - net_deposits
             # Then distribute across all bots' trades to make accounting consistent
-            target_total_pnl = data.new_value - account.initial_balance
+            net_deposits = await get_account_net_deposits(db, account.id)
+            target_total_pnl = data.new_value - account.initial_balance - net_deposits
             result = await db.execute(select(Bot).where(Bot.account_id == account.id))
             bots = list(result.scalars().all())
             if bots:
@@ -287,12 +289,18 @@ async def recalculate(data: RecalculateRequest, db: AsyncSession = Depends(get_d
             if not editable_accounts:
                 raise HTTPException(status_code=400, detail="All accounts are frozen")
 
-            pinned_pnl = sum(a.current_balance - a.initial_balance for a in portfolio.accounts if a.is_pinned)
+            # Compute trading PnL excluding deposits/withdrawals for each account
+            account_trading_pnl: dict[int, float] = {}
+            for a in portfolio.accounts:
+                net_deps = await get_account_net_deposits(db, a.id)
+                account_trading_pnl[a.id] = a.current_balance - a.initial_balance - net_deps
+
+            pinned_pnl = sum(account_trading_pnl[a.id] for a in portfolio.accounts if a.is_pinned)
             distributable_target = data.new_value - pinned_pnl
-            editable_pnl = sum(a.current_balance - a.initial_balance for a in editable_accounts)
+            editable_pnl = sum(account_trading_pnl[a.id] for a in editable_accounts)
 
             for a in editable_accounts:
-                a_pnl = a.current_balance - a.initial_balance
+                a_pnl = account_trading_pnl[a.id]
                 share = a_pnl / editable_pnl if editable_pnl != 0 else 1.0 / len(editable_accounts)
                 account_target_pnl = distributable_target * share
 
@@ -1229,10 +1237,11 @@ async def regenerate_portfolio(
     unlocked_accounts = [a for a in accounts if not a.is_pinned]
     locked_accounts = [a for a in accounts if a.is_pinned]
 
-    # Calculate frozen accounts' contribution
+    # Calculate frozen accounts' trading PnL (excluding deposits/withdrawals)
     frozen_pnl = 0.0
     for acct in locked_accounts:
-        frozen_pnl += acct.current_balance - acct.initial_balance
+        net_deps = await get_account_net_deposits(db, acct.id)
+        frozen_pnl += acct.current_balance - acct.initial_balance - net_deps
 
     # Distribute portfolio-level total_pnl constraint across unlocked accounts
     account_pnl_targets: dict[int, float] = {}

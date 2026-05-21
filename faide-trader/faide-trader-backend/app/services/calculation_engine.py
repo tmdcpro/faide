@@ -313,6 +313,21 @@ async def recalculate_account(db: AsyncSession, account_id: int) -> dict:
     }
 
 
+async def get_account_net_deposits(db: AsyncSession, account_id: int) -> float:
+    """Get net deposits (deposits - withdrawals) for an account."""
+    dep_result = await db.execute(
+        select(func.coalesce(func.sum(Transaction.amount), 0))
+        .where(Transaction.account_id == account_id, Transaction.type == "deposit")
+    )
+    total_deposits = dep_result.scalar() or 0.0
+    wd_result = await db.execute(
+        select(func.coalesce(func.sum(Transaction.amount), 0))
+        .where(Transaction.account_id == account_id, Transaction.type == "withdrawal")
+    )
+    total_withdrawals = wd_result.scalar() or 0.0
+    return total_deposits - total_withdrawals
+
+
 async def recalculate_portfolio(db: AsyncSession, portfolio_id: int) -> dict:
     """Recalculate portfolio-level stats from all accounts. Pinned accounts are not recalculated."""
     result = await db.execute(select(Account).where(Account.portfolio_id == portfolio_id))
@@ -323,7 +338,8 @@ async def recalculate_portfolio(db: AsyncSession, portfolio_id: int) -> dict:
 
     for account in accounts:
         if account.is_pinned:
-            total_pnl += account.current_balance - account.initial_balance
+            net_deposits = await get_account_net_deposits(db, account.id)
+            total_pnl += account.current_balance - account.initial_balance - net_deposits
             total_balance += account.current_balance
         else:
             acct_stats = await recalculate_account(db, account.id)
