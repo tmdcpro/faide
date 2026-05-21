@@ -31,6 +31,7 @@ async def list_portfolios(db: AsyncSession = Depends(get_db)):
             name=p.name,
             description=p.description,
             pinned_stats=p.pinned_stats,
+            pinned_stat_values=p.pinned_stat_values,
             created_at=p.created_at,
             updated_at=p.updated_at,
             account_count=len(p.accounts),
@@ -51,6 +52,7 @@ async def create_portfolio(data: PortfolioCreate, db: AsyncSession = Depends(get
         name=portfolio.name,
         description=portfolio.description,
         pinned_stats=portfolio.pinned_stats,
+        pinned_stat_values=portfolio.pinned_stat_values,
         created_at=portfolio.created_at,
         updated_at=portfolio.updated_at,
     )
@@ -76,6 +78,7 @@ async def get_portfolio(portfolio_id: int, db: AsyncSession = Depends(get_db)):
         name=portfolio.name,
         description=portfolio.description,
         pinned_stats=portfolio.pinned_stats,
+        pinned_stat_values=portfolio.pinned_stat_values,
         created_at=portfolio.created_at,
         updated_at=portfolio.updated_at,
         account_count=len(portfolio.accounts),
@@ -104,6 +107,7 @@ async def update_portfolio(
         name=portfolio.name,
         description=portfolio.description,
         pinned_stats=portfolio.pinned_stats,
+        pinned_stat_values=portfolio.pinned_stat_values,
         created_at=portfolio.created_at,
         updated_at=portfolio.updated_at,
     )

@@ -281,7 +281,7 @@ function App() {
             entityType="portfolio"
             entityId={view.portfolioId}
             pinnedStats={currentPortfolio?.pinned_stats || []}
-            editableFields={['total_pnl']}
+            pinnedStatValues={currentPortfolio?.pinned_stat_values || {}}
             onRecalculated={loadData}
           />
           <div className="mt-4">
@@ -401,13 +401,15 @@ function App() {
                 </p>
                 <div className="space-y-1">
                   {currentPortfolio.pinned_stats.map((field: string) => {
-                    const value = (stats as unknown as Record<string, number>)[field];
+                    const computedValue = (stats as unknown as Record<string, number>)[field];
+                    const constraintVal = currentPortfolio.pinned_stat_values?.[field];
+                    const displayValue = constraintVal ?? computedValue;
                     const label = field.replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase());
                     return (
                       <div key={field} className="flex justify-between text-sm">
                         <span className="text-gray-300">{label}</span>
                         <span className="text-yellow-400 font-mono">
-                          {typeof value === 'number' ? value.toLocaleString(undefined, { maximumFractionDigits: 4 }) : 'N/A'}
+                          {typeof displayValue === 'number' ? displayValue.toLocaleString(undefined, { maximumFractionDigits: 4 }) : 'N/A'}
                         </span>
                       </div>
                     );
@@ -565,7 +567,7 @@ function App() {
               entityType="account"
               entityId={view.accountId}
               pinnedStats={currentAccount?.pinned_stats || []}
-              editableFields={['current_balance', 'initial_balance']}
+              pinnedStatValues={currentAccount?.pinned_stat_values || {}}
               onRecalculated={loadData}
             />
             <div className="mt-4">
@@ -675,13 +677,15 @@ function App() {
                   </p>
                   <div className="space-y-1">
                     {currentAccount.pinned_stats.map((field: string) => {
-                      const value = (stats as unknown as Record<string, number>)[field];
+                      const computedValue = (stats as unknown as Record<string, number>)[field];
+                      const constraintVal = currentAccount.pinned_stat_values?.[field];
+                      const displayValue = constraintVal ?? computedValue;
                       const label = field.replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase());
                       return (
                         <div key={field} className="flex justify-between text-sm">
                           <span className="text-gray-300">{label}</span>
                           <span className="text-yellow-400 font-mono">
-                            {typeof value === 'number' ? value.toLocaleString(undefined, { maximumFractionDigits: 4 }) : 'N/A'}
+                            {typeof displayValue === 'number' ? displayValue.toLocaleString(undefined, { maximumFractionDigits: 4 }) : 'N/A'}
                           </span>
                         </div>
                       );
@@ -848,6 +852,7 @@ function App() {
               entityType="bot"
               entityId={view.botId}
               pinnedStats={currentBot?.pinned_stats || []}
+              pinnedStatValues={currentBot?.pinned_stat_values || {}}
               onRecalculated={loadData}
             />
           </div>
@@ -923,13 +928,15 @@ function App() {
                   </p>
                   <div className="space-y-1">
                     {currentBot.pinned_stats.map((field) => {
-                      const value = (stats as unknown as Record<string, number>)[field];
+                      const computedValue = (stats as unknown as Record<string, number>)[field];
+                      const constraintVal = currentBot.pinned_stat_values?.[field];
+                      const displayValue = constraintVal ?? computedValue;
                       const label = field.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
                       return (
                         <div key={field} className="flex justify-between text-sm">
                           <span className="text-gray-300">{label}</span>
                           <span className="text-yellow-400 font-mono">
-                            {typeof value === 'number' ? value.toLocaleString(undefined, { maximumFractionDigits: 4 }) : 'N/A'}
+                            {typeof displayValue === 'number' ? displayValue.toLocaleString(undefined, { maximumFractionDigits: 4 }) : 'N/A'}
                           </span>
                         </div>
                       );

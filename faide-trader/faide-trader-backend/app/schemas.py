@@ -19,6 +19,7 @@ class PortfolioResponse(BaseModel):
     name: str
     description: str
     pinned_stats: list[str] = []
+    pinned_stat_values: dict[str, float | None] = {}
     created_at: datetime
     updated_at: datetime
     account_count: int = 0
@@ -52,6 +53,7 @@ class AccountResponse(BaseModel):
     current_balance: float
     is_pinned: bool = False
     pinned_stats: list[str] = []
+    pinned_stat_values: dict[str, float | None] = {}
     created_at: datetime
     updated_at: datetime
     bot_count: int = 0
@@ -91,6 +93,7 @@ class BotResponse(BaseModel):
     is_active: bool
     is_pinned: bool = False
     pinned_stats: list[str] = []
+    pinned_stat_values: dict[str, float | None] = {}
     created_at: datetime
     updated_at: datetime
     total_pnl: float = 0.0
@@ -271,6 +274,21 @@ class TogglePinResponse(BaseModel):
     entity_id: int
     field: Optional[str] = None
     pinned: bool
+
+
+class SetConstraintRequest(BaseModel):
+    entity_type: str  # "bot", "account", "portfolio"
+    entity_id: int
+    field: str
+    value: float
+
+
+class SetConstraintResponse(BaseModel):
+    success: bool
+    entity_type: str
+    entity_id: int
+    field: str
+    value: float
 
 
 class RecalculateResponse(BaseModel):

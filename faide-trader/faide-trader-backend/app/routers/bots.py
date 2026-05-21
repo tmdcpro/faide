@@ -23,6 +23,7 @@ def build_bot_response(bot: Bot, trades: list[Trade], initial_balance: float) ->
         is_active=bot.is_active,
         is_pinned=bot.is_pinned,
         pinned_stats=bot.pinned_stats,
+        pinned_stat_values=bot.pinned_stat_values,
         created_at=bot.created_at,
         updated_at=bot.updated_at,
         total_pnl=stats["total_pnl"],

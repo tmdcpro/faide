@@ -38,13 +38,35 @@ class Portfolio(Base):
     @property
     def pinned_stats(self) -> list[str]:
         try:
-            return json.loads(self._pinned_stats) if self._pinned_stats else []
+            data = json.loads(self._pinned_stats) if self._pinned_stats else []
+            if isinstance(data, dict):
+                return list(data.keys())
+            return data
         except (json.JSONDecodeError, TypeError):
             return []
 
     @pinned_stats.setter
     def pinned_stats(self, value: list[str]) -> None:
-        self._pinned_stats = json.dumps(value if value else [])
+        # Preserve existing constraint values when updating the field list
+        existing = self.pinned_stat_values
+        new_dict = {}
+        for field in (value if value else []):
+            new_dict[field] = existing.get(field)
+        self._pinned_stats = json.dumps(new_dict)
+
+    @property
+    def pinned_stat_values(self) -> dict[str, float | None]:
+        try:
+            data = json.loads(self._pinned_stats) if self._pinned_stats else {}
+            if isinstance(data, list):
+                return {f: None for f in data}
+            return data
+        except (json.JSONDecodeError, TypeError):
+            return {}
+
+    @pinned_stat_values.setter
+    def pinned_stat_values(self, value: dict[str, float | None]) -> None:
+        self._pinned_stats = json.dumps(value if value else {})
 
 
 class Account(Base):
@@ -67,13 +89,34 @@ class Account(Base):
     @property
     def pinned_stats(self) -> list[str]:
         try:
-            return json.loads(self._pinned_stats) if self._pinned_stats else []
+            data = json.loads(self._pinned_stats) if self._pinned_stats else []
+            if isinstance(data, dict):
+                return list(data.keys())
+            return data
         except (json.JSONDecodeError, TypeError):
             return []
 
     @pinned_stats.setter
     def pinned_stats(self, value: list[str]) -> None:
-        self._pinned_stats = json.dumps(value if value else [])
+        existing = self.pinned_stat_values
+        new_dict = {}
+        for field in (value if value else []):
+            new_dict[field] = existing.get(field)
+        self._pinned_stats = json.dumps(new_dict)
+
+    @property
+    def pinned_stat_values(self) -> dict[str, float | None]:
+        try:
+            data = json.loads(self._pinned_stats) if self._pinned_stats else {}
+            if isinstance(data, list):
+                return {f: None for f in data}
+            return data
+        except (json.JSONDecodeError, TypeError):
+            return {}
+
+    @pinned_stat_values.setter
+    def pinned_stat_values(self, value: dict[str, float | None]) -> None:
+        self._pinned_stats = json.dumps(value if value else {})
 
 
 class Bot(Base):
@@ -99,14 +142,35 @@ class Bot(Base):
     def pinned_stats(self) -> list[str]:
         """Get the list of stat fields that are pinned/locked."""
         try:
-            return json.loads(self._pinned_stats) if self._pinned_stats else []
+            data = json.loads(self._pinned_stats) if self._pinned_stats else []
+            if isinstance(data, dict):
+                return list(data.keys())
+            return data
         except (json.JSONDecodeError, TypeError):
             return []
 
     @pinned_stats.setter
     def pinned_stats(self, value: list[str]) -> None:
         """Set the list of pinned stat field names."""
-        self._pinned_stats = json.dumps(value if value else [])
+        existing = self.pinned_stat_values
+        new_dict = {}
+        for field in (value if value else []):
+            new_dict[field] = existing.get(field)
+        self._pinned_stats = json.dumps(new_dict)
+
+    @property
+    def pinned_stat_values(self) -> dict[str, float | None]:
+        try:
+            data = json.loads(self._pinned_stats) if self._pinned_stats else {}
+            if isinstance(data, list):
+                return {f: None for f in data}
+            return data
+        except (json.JSONDecodeError, TypeError):
+            return {}
+
+    @pinned_stat_values.setter
+    def pinned_stat_values(self, value: dict[str, float | None]) -> None:
+        self._pinned_stats = json.dumps(value if value else {})
 
     @property
     def symbols(self) -> list[str]:

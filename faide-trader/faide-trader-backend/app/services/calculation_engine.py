@@ -861,12 +861,14 @@ async def regenerate_bot_trades(
     pinned_trades = [t for t in existing_trades if t.is_pinned]
     unpinned_trades = [t for t in existing_trades if not t.is_pinned]
 
-    # Get locked stat constraints with current values
-    locked_stats = bot.pinned_stats
+    # Get locked stat constraints — use explicit values if set, else current computed values
+    pinned_values = bot.pinned_stat_values
     current_stats = calculate_stats_from_trades(existing_trades, initial_balance)
     constraints: dict[str, float] = {}
-    for field in locked_stats:
-        if field in current_stats:
+    for field, explicit_value in pinned_values.items():
+        if explicit_value is not None:
+            constraints[field] = explicit_value
+        elif field in current_stats:
             constraints[field] = current_stats[field]
 
     # Merge in extra constraints from parent-level regeneration

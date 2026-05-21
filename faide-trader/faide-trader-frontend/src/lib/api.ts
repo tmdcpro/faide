@@ -18,6 +18,7 @@ export interface Portfolio {
   name: string;
   description: string;
   pinned_stats: string[];
+  pinned_stat_values: Record<string, number | null>;
   created_at: string;
   updated_at: string;
   account_count: number;
@@ -34,6 +35,7 @@ export interface Account {
   current_balance: number;
   is_pinned: boolean;
   pinned_stats: string[];
+  pinned_stat_values: Record<string, number | null>;
   created_at: string;
   updated_at: string;
   bot_count: number;
@@ -52,6 +54,7 @@ export interface Bot {
   is_active: boolean;
   is_pinned: boolean;
   pinned_stats: string[];
+  pinned_stat_values: Record<string, number | null>;
   created_at: string;
   updated_at: string;
   total_pnl: number;
@@ -283,6 +286,10 @@ export const api = {
   togglePin: (data: TogglePinRequest) =>
     request<{ success: boolean; entity_type: string; entity_id: number; field?: string; pinned: boolean }>(
       '/api/toggle-pin', { method: 'POST', body: JSON.stringify(data) }
+    ),
+  setConstraint: (data: { entity_type: string; entity_id: number; field: string; value: number }) =>
+    request<{ success: boolean; entity_type: string; entity_id: number; field: string; value: number }>(
+      '/api/set-constraint', { method: 'POST', body: JSON.stringify(data) }
     ),
 
   // Regenerate

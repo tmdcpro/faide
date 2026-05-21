@@ -18,6 +18,8 @@ from app.schemas import (
     PeriodPnlUpdate,
     TogglePinRequest,
     TogglePinResponse,
+    SetConstraintRequest,
+    SetConstraintResponse,
     RegenerateRequest,
     RegenerateResponse,
 )
@@ -177,7 +179,7 @@ async def recalculate(data: RecalculateRequest, db: AsyncSession = Depends(get_d
         if not account:
             raise HTTPException(status_code=404, detail="Account not found")
 
-        supported_account_fields = {"current_balance", "initial_balance"}
+        supported_account_fields = {"current_balance", "initial_balance", "total_pnl", "net_pnl"}
         if data.field not in supported_account_fields:
             raise HTTPException(status_code=400, detail=f"Field '{data.field}' is not editable on accounts. Supported: {sorted(supported_account_fields)}")
 
@@ -220,6 +222,42 @@ async def recalculate(data: RecalculateRequest, db: AsyncSession = Depends(get_d
                         )
                 else:
                     # All editable bots are flat — even split
+                    per_bot_pnl = distributable_target / len(editable_bots)
+                    for bot in editable_bots:
+                        await handle_top_down_edit(db, bot.id, per_bot_pnl, data.pinned_fields)
+        elif data.field in ("total_pnl", "net_pnl"):
+            target_total_pnl = data.new_value
+            result = await db.execute(select(Bot).where(Bot.account_id == account.id))
+            bots = list(result.scalars().all())
+            if bots:
+                bot_pnls: dict[int, float] = {}
+                bot_has_editable: dict[int, bool] = {}
+                for bot in bots:
+                    trade_result = await db.execute(
+                        select(Trade).where(Trade.bot_id == bot.id)
+                    )
+                    bot_trades = list(trade_result.scalars().all())
+                    bot_pnls[bot.id] = sum(t.pnl for t in bot_trades)
+                    bot_has_editable[bot.id] = any(not t.is_pinned for t in bot_trades)
+
+                editable_bots = [b for b in bots if not b.is_pinned and bot_has_editable.get(b.id, False)]
+                if not editable_bots:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Cannot edit total_pnl because all bots are locked or have all trades pinned",
+                    )
+
+                editable_pnl = sum(bot_pnls[b.id] for b in editable_bots)
+                pinned_bot_pnl = sum(bot_pnls[b.id] for b in bots if b not in editable_bots)
+                distributable_target = target_total_pnl - pinned_bot_pnl
+
+                if editable_pnl != 0:
+                    for bot in editable_bots:
+                        bot_share = bot_pnls[bot.id] / editable_pnl
+                        await handle_top_down_edit(
+                            db, bot.id, distributable_target * bot_share, data.pinned_fields
+                        )
+                else:
                     per_bot_pnl = distributable_target / len(editable_bots)
                     for bot in editable_bots:
                         await handle_top_down_edit(db, bot.id, per_bot_pnl, data.pinned_fields)
@@ -437,6 +475,36 @@ async def toggle_pin(data: TogglePinRequest, db: AsyncSession = Depends(get_db))
         )
 
     raise HTTPException(status_code=400, detail=f"Unsupported entity_type: {data.entity_type}")
+
+
+@router.post("/set-constraint", response_model=SetConstraintResponse)
+async def set_constraint(data: SetConstraintRequest, db: AsyncSession = Depends(get_db)):
+    """Set a constraint value for a locked stat. The stat must already be pinned."""
+    if data.entity_type == "bot":
+        entity = await db.get(Bot, data.entity_id)
+    elif data.entity_type == "account":
+        entity = await db.get(Account, data.entity_id)
+    elif data.entity_type == "portfolio":
+        entity = await db.get(Portfolio, data.entity_id)
+    else:
+        raise HTTPException(status_code=400, detail=f"Unsupported entity_type: {data.entity_type}")
+
+    if not entity:
+        raise HTTPException(status_code=404, detail=f"{data.entity_type} not found")
+
+    # Ensure the field is pinned first; if not, pin it
+    current_values = entity.pinned_stat_values
+    current_values[data.field] = data.value
+    entity.pinned_stat_values = current_values
+
+    await db.commit()
+    return SetConstraintResponse(
+        success=True,
+        entity_type=data.entity_type,
+        entity_id=data.entity_id,
+        field=data.field,
+        value=data.value,
+    )
 
 
 @router.get("/bots/{bot_id}/pnl", response_model=list[PnlRecordResponse])
@@ -1032,12 +1100,15 @@ async def regenerate_account(
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid end_date format")
 
-    # Build account-level constraints from pinned_stats
+    # Build account-level constraints from pinned_stats (use explicit values if set)
     account_constraints: dict[str, float] = {}
     if account.pinned_stats:
         acct_stats = await _get_account_stats(db, account)
+        pinned_values = account.pinned_stat_values
         for field in account.pinned_stats:
-            if field in acct_stats:
+            if pinned_values.get(field) is not None:
+                account_constraints[field] = pinned_values[field]
+            elif field in acct_stats:
                 account_constraints[field] = acct_stats[field]
 
     # Calculate frozen bots' contribution to subtract from account targets
@@ -1133,12 +1204,15 @@ async def regenerate_portfolio(
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid end_date format")
 
-    # Build portfolio-level constraints from pinned_stats
+    # Build portfolio-level constraints from pinned_stats (use explicit values if set)
     portfolio_constraints: dict[str, float] = {}
     if portfolio.pinned_stats:
         port_stats = await _get_portfolio_stats(db, portfolio_id, accounts)
+        pinned_values = portfolio.pinned_stat_values
         for field in portfolio.pinned_stats:
-            if field in port_stats:
+            if pinned_values.get(field) is not None:
+                portfolio_constraints[field] = pinned_values[field]
+            elif field in port_stats:
                 portfolio_constraints[field] = port_stats[field]
 
     unlocked_accounts = [a for a in accounts if not a.is_pinned]
