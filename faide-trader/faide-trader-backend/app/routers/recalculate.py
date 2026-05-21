@@ -1,12 +1,12 @@
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.database import get_db
-from app.models.portfolio import Trade, Bot, Account, Portfolio, PnlRecord
+from app.models.portfolio import Trade, Bot, Account, Portfolio, PnlRecord, Transaction
 from app.schemas import (
     RecalculateRequest,
     RecalculateResponse,
@@ -1051,6 +1051,17 @@ async def _get_account_stats(db: AsyncSession, account: Account) -> dict:
         total_pnl += bot_stats.get("net_pnl", 0.0)
         total_trades += bot_stats.get("total_trades", 0)
         total_wins += bot_stats.get("win_count", 0)
+    dep_result = await db.execute(
+        select(func.coalesce(func.sum(Transaction.amount), 0))
+        .where(Transaction.account_id == account.id, Transaction.type == "deposit")
+    )
+    total_deposits = dep_result.scalar() or 0.0
+    wd_result = await db.execute(
+        select(func.coalesce(func.sum(Transaction.amount), 0))
+        .where(Transaction.account_id == account.id, Transaction.type == "withdrawal")
+    )
+    total_withdrawals = wd_result.scalar() or 0.0
+
     return {
         "total_pnl": round(total_pnl, 2),
         "net_pnl": round(total_pnl, 2),
@@ -1058,7 +1069,7 @@ async def _get_account_stats(db: AsyncSession, account: Account) -> dict:
         "win_count": total_wins,
         "loss_count": total_trades - total_wins,
         "win_rate": round(total_wins / total_trades * 100, 2) if total_trades > 0 else 0.0,
-        "current_balance": round(account.initial_balance + total_pnl, 2),
+        "current_balance": round(account.initial_balance + total_pnl + total_deposits - total_withdrawals, 2),
     }
 
 

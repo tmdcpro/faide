@@ -13,7 +13,7 @@ import numpy as np
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.portfolio import Trade, Bot, Account, Portfolio, PnlRecord
+from app.models.portfolio import Trade, Bot, Account, Portfolio, PnlRecord, Transaction
 
 
 def calculate_trade_pnl(
@@ -289,7 +289,18 @@ async def recalculate_account(db: AsyncSession, account_id: int) -> dict:
         total_trades += bot_stats.get("total_trades", 0)
         total_wins += bot_stats.get("win_count", 0)
 
-    account.current_balance = account.initial_balance + total_pnl
+    dep_result = await db.execute(
+        select(func.coalesce(func.sum(Transaction.amount), 0))
+        .where(Transaction.account_id == account_id, Transaction.type == "deposit")
+    )
+    total_deposits = dep_result.scalar() or 0.0
+    wd_result = await db.execute(
+        select(func.coalesce(func.sum(Transaction.amount), 0))
+        .where(Transaction.account_id == account_id, Transaction.type == "withdrawal")
+    )
+    total_withdrawals = wd_result.scalar() or 0.0
+
+    account.current_balance = account.initial_balance + total_pnl + total_deposits - total_withdrawals
     await db.flush()
 
     return {
