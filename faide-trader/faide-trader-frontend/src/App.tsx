@@ -18,6 +18,7 @@ import { EditableField } from '@/components/EditableField';
 import { MarketDataImportDialog } from '@/components/MarketDataImportDialog';
 import { GenerateTradesDialog } from '@/components/GenerateTradesDialog';
 import { CreateBotDialog } from '@/components/CreateBotDialog';
+import { EditBotDialog } from '@/components/EditBotDialog';
 import { SymbolPnlView } from '@/components/SymbolPnlView';
 import {
   ChevronRight,
@@ -33,6 +34,7 @@ import {
   Zap,
   Lock,
   Unlock,
+  Pencil,
 } from 'lucide-react';
 
 type View =
@@ -54,6 +56,7 @@ function App() {
   const [showMarketImport, setShowMarketImport] = useState(false);
   const [showGenerateTrades, setShowGenerateTrades] = useState(false);
   const [showRegenerate, setShowRegenerate] = useState<false | 'bot' | 'account' | 'portfolio'>(false);
+  const [showEdit, setShowEdit] = useState<null | 'portfolio' | 'account' | 'bot'>(null);
   const [regenerating, setRegenerating] = useState(false);
   const [currentPortfolio, setCurrentPortfolio] = useState<Portfolio | null>(null);
   const [currentAccount, setCurrentAccount] = useState<Account | null>(null);
@@ -241,6 +244,13 @@ function App() {
             <h1 className="text-2xl font-bold">{currentPortfolio?.name}</h1>
             <p className="text-sm text-gray-400">{currentPortfolio?.description}</p>
           </div>
+          <button
+            onClick={() => setShowEdit('portfolio')}
+            className="p-2 hover:bg-slate-700 rounded-lg transition-colors text-gray-400 hover:text-white"
+            title="Edit portfolio"
+          >
+            <Pencil size={16} />
+          </button>
         </div>
         <div className="flex items-center gap-2">
           <button onClick={loadData} className="p-2 hover:bg-slate-700 rounded-lg transition-colors" title="Refresh">
@@ -381,6 +391,25 @@ function App() {
         />
       )}
 
+      {showEdit === 'portfolio' && currentPortfolio && (
+        <CreateDialog
+          title="Edit Portfolio"
+          submitLabel="Save"
+          fields={[
+            { name: 'name', label: 'Portfolio Name', type: 'text', required: true, defaultValue: currentPortfolio.name },
+            { name: 'description', label: 'Description', type: 'text', defaultValue: currentPortfolio.description },
+          ]}
+          onSubmit={async (data) => {
+            await api.updatePortfolio(currentPortfolio.id, {
+              name: data.name as string,
+              description: data.description as string,
+            });
+            loadData();
+          }}
+          onClose={() => setShowEdit(null)}
+        />
+      )}
+
       {showRegenerate === 'portfolio' && currentPortfolio && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
           <div className="bg-slate-800 rounded-lg border border-slate-700 p-6 w-full max-w-md">
@@ -507,6 +536,13 @@ function App() {
                 )}
               </p>
             </div>
+            <button
+              onClick={() => setShowEdit('account')}
+              className="p-2 hover:bg-slate-700 rounded-lg transition-colors text-gray-400 hover:text-white"
+              title="Edit account"
+            >
+              <Pencil size={16} />
+            </button>
           </div>
           <div className="flex items-center gap-2">
             <button
@@ -657,6 +693,35 @@ function App() {
           />
         )}
 
+        {showEdit === 'account' && currentAccount && (
+          <CreateDialog
+            title="Edit Account"
+            submitLabel="Save"
+            fields={[
+              { name: 'name', label: 'Account Name', type: 'text', required: true, defaultValue: currentAccount.name },
+              {
+                name: 'exchange', label: 'Exchange', type: 'select',
+                options: [
+                  { value: 'bitget_futures', label: 'Bitget Futures' },
+                  { value: 'phemex_futures', label: 'Phemex Futures' },
+                  { value: 'kraken', label: 'Kraken' },
+                ],
+                defaultValue: currentAccount.exchange,
+              },
+              { name: 'initial_balance', label: 'Initial Balance ($)', type: 'number', defaultValue: currentAccount.initial_balance },
+            ]}
+            onSubmit={async (data) => {
+              await api.updateAccount(currentAccount.id, {
+                name: data.name as string,
+                exchange: data.exchange as string,
+                initial_balance: data.initial_balance as number,
+              });
+              loadData();
+            }}
+            onClose={() => setShowEdit(null)}
+          />
+        )}
+
         {showRegenerate === 'account' && currentAccount && (
           <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
             <div className="bg-slate-800 rounded-lg border border-slate-700 p-6 w-full max-w-md">
@@ -785,6 +850,13 @@ function App() {
                 )}
               </p>
             </div>
+            <button
+              onClick={() => setShowEdit('bot')}
+              className="p-2 hover:bg-slate-700 rounded-lg transition-colors text-gray-400 hover:text-white"
+              title="Edit bot"
+            >
+              <Pencil size={16} />
+            </button>
           </div>
           <div className="flex items-center gap-2">
             <button
@@ -905,6 +977,30 @@ function App() {
             botSymbol={currentBot?.symbol || 'BTC/USDT'}
             onClose={() => setShowGenerateTrades(false)}
             onGenerated={loadData}
+          />
+        )}
+
+        {showEdit === 'bot' && currentBot && (
+          <EditBotDialog
+            bot={{
+              name: currentBot.name,
+              strategy_type: currentBot.strategy_type,
+              symbol: currentBot.symbol,
+              symbols: currentBot.symbols,
+              is_active: currentBot.is_active,
+            }}
+            accountExchange={currentAccount?.exchange || 'bitget_futures'}
+            onSubmit={async (data) => {
+              await api.updateBot(currentBot.id, {
+                name: data.name,
+                strategy_type: data.strategy_type,
+                symbol: data.symbol,
+                symbols: data.symbols,
+                is_active: data.is_active,
+              });
+              loadData();
+            }}
+            onClose={() => setShowEdit(null)}
           />
         )}
 
