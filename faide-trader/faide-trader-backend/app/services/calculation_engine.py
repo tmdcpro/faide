@@ -831,11 +831,14 @@ async def regenerate_bot_trades(
     num_trades: Optional[int] = None,
     start_date: Optional[datetime] = None,
     end_date: Optional[datetime] = None,
+    extra_constraints: Optional[dict[str, float]] = None,
+    skip_account_recalc: bool = False,
 ) -> dict:
     """
     Regenerate trades for a bot while satisfying all locked stat constraints.
 
     Locked stats (from bot.pinned_stats) are treated as hard constraints.
+    extra_constraints are merged in (from parent account/portfolio regeneration).
     Pinned trades are preserved; only unpinned trades are replaced.
     Returns the final bot stats after regeneration.
     """
@@ -865,6 +868,12 @@ async def regenerate_bot_trades(
     for field in locked_stats:
         if field in current_stats:
             constraints[field] = current_stats[field]
+
+    # Merge in extra constraints from parent-level regeneration
+    if extra_constraints:
+        for field, value in extra_constraints.items():
+            if field not in constraints:
+                constraints[field] = value
 
     # Determine date range from existing trades or parameters
     if not start_date:
@@ -910,7 +919,8 @@ async def regenerate_bot_trades(
 
     # Recalculate bot stats
     stats = await recalculate_bot_from_trades(db, bot_id)
-    await recalculate_account(db, account.id)
+    if not skip_account_recalc:
+        await recalculate_account(db, account.id)
     await db.flush()
 
     return stats

@@ -53,7 +53,7 @@ function App() {
   const [showCreate, setShowCreate] = useState<string | null>(null);
   const [showMarketImport, setShowMarketImport] = useState(false);
   const [showGenerateTrades, setShowGenerateTrades] = useState(false);
-  const [showRegenerate, setShowRegenerate] = useState(false);
+  const [showRegenerate, setShowRegenerate] = useState<false | 'bot' | 'account' | 'portfolio'>(false);
   const [regenerating, setRegenerating] = useState(false);
   const [currentPortfolio, setCurrentPortfolio] = useState<Portfolio | null>(null);
   const [currentAccount, setCurrentAccount] = useState<Account | null>(null);
@@ -247,6 +247,13 @@ function App() {
             <RefreshCw size={16} />
           </button>
           <button
+            onClick={() => setShowRegenerate('portfolio')}
+            className="flex items-center gap-2 px-4 py-2 bg-purple-600 hover:bg-purple-500 rounded-lg text-sm font-medium transition-colors"
+            title="Regenerate all bot trades across all accounts while respecting locked values"
+          >
+            <RefreshCw size={16} /> Regenerate
+          </button>
+          <button
             onClick={() => setShowCreate('account')}
             className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded-lg text-sm font-medium transition-colors"
           >
@@ -373,6 +380,105 @@ function App() {
           onClose={() => setShowCreate(null)}
         />
       )}
+
+      {showRegenerate === 'portfolio' && currentPortfolio && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-slate-800 rounded-lg border border-slate-700 p-6 w-full max-w-md">
+            <h2 className="text-lg font-bold mb-4">Regenerate Portfolio Stats</h2>
+            <p className="text-sm text-gray-400 mb-4">
+              This will regenerate trades for all unfrozen bots across all unfrozen accounts.
+              {(currentPortfolio.pinned_stats?.length ?? 0) > 0 ? (
+                <span> Portfolio-level locked values will be distributed as constraints across accounts and bots.</span>
+              ) : (
+                <span> No portfolio-level stats are locked. Account and bot-level locks will still be respected.</span>
+              )}
+            </p>
+
+            {(currentPortfolio.pinned_stats?.length ?? 0) > 0 && stats && (
+              <div className="bg-slate-700/50 rounded-lg p-3 mb-4">
+                <p className="text-xs text-yellow-400 font-medium mb-2 flex items-center gap-1">
+                  <Lock size={12} /> Portfolio constraints:
+                </p>
+                <div className="space-y-1">
+                  {currentPortfolio.pinned_stats.map((field: string) => {
+                    const value = (stats as unknown as Record<string, number>)[field];
+                    const label = field.replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase());
+                    return (
+                      <div key={field} className="flex justify-between text-sm">
+                        <span className="text-gray-300">{label}</span>
+                        <span className="text-yellow-400 font-mono">
+                          {typeof value === 'number' ? value.toLocaleString(undefined, { maximumFractionDigits: 4 }) : 'N/A'}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {accounts.some(a => (a.pinned_stats?.length ?? 0) > 0) && (
+              <div className="bg-slate-700/50 rounded-lg p-3 mb-4">
+                <p className="text-xs text-blue-400 font-medium mb-2 flex items-center gap-1">
+                  <Lock size={12} /> Account-level constraints:
+                </p>
+                <div className="space-y-1">
+                  {accounts.filter(a => (a.pinned_stats?.length ?? 0) > 0).map(a => (
+                    <div key={a.id} className="text-sm text-gray-300">
+                      <span className="font-medium">{a.name}:</span>{' '}
+                      {a.pinned_stats.map((f: string) => f.replace(/_/g, ' ')).join(', ')}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {accounts.some(a => a.is_pinned) && (
+              <div className="bg-slate-700/50 rounded-lg p-3 mb-4">
+                <p className="text-xs text-gray-400 font-medium mb-2">
+                  Frozen accounts (will be skipped): {accounts.filter(a => a.is_pinned).map(a => a.name).join(', ')}
+                </p>
+              </div>
+            )}
+
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={() => setShowRegenerate(false)}
+                className="px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg text-sm transition-colors"
+                disabled={regenerating}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={async () => {
+                  setRegenerating(true);
+                  try {
+                    await api.regeneratePortfolio(currentPortfolio.id);
+                    loadData();
+                  } catch (e) {
+                    console.error('Portfolio regeneration failed:', e);
+                    alert(`Regeneration failed: ${e instanceof Error ? e.message : 'Unknown error'}`);
+                  } finally {
+                    setRegenerating(false);
+                    setShowRegenerate(false);
+                  }
+                }}
+                disabled={regenerating}
+                className="flex items-center gap-2 px-4 py-2 bg-purple-600 hover:bg-purple-500 disabled:bg-purple-800 disabled:text-gray-400 rounded-lg text-sm font-medium transition-colors"
+              >
+                {regenerating ? (
+                  <>
+                    <RefreshCw size={14} className="animate-spin" /> Regenerating...
+                  </>
+                ) : (
+                  <>
+                    <RefreshCw size={14} /> Regenerate
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
     );
   };
@@ -423,6 +529,13 @@ function App() {
             </button>
             <button onClick={loadData} className="p-2 hover:bg-slate-700 rounded-lg transition-colors">
               <RefreshCw size={16} />
+            </button>
+            <button
+              onClick={() => setShowRegenerate('account')}
+              className="flex items-center gap-2 px-4 py-2 bg-purple-600 hover:bg-purple-500 rounded-lg text-sm font-medium transition-colors"
+              title="Regenerate all bot trades in this account while respecting locked values"
+            >
+              <RefreshCw size={16} /> Regenerate
             </button>
             <button
               onClick={() => setShowCreate('bot')}
@@ -541,6 +654,105 @@ function App() {
             onClose={() => setShowCreate(null)}
           />
         )}
+
+        {showRegenerate === 'account' && currentAccount && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+            <div className="bg-slate-800 rounded-lg border border-slate-700 p-6 w-full max-w-md">
+              <h2 className="text-lg font-bold mb-4">Regenerate Account Stats</h2>
+              <p className="text-sm text-gray-400 mb-4">
+                This will regenerate trades for all unfrozen bots in this account.
+                {(currentAccount.pinned_stats?.length ?? 0) > 0 ? (
+                  <span> Account-level locked values will be respected as constraints.</span>
+                ) : (
+                  <span> No account-level stats are locked. Bot-level locks will still be respected.</span>
+                )}
+              </p>
+
+              {(currentAccount.pinned_stats?.length ?? 0) > 0 && stats && (
+                <div className="bg-slate-700/50 rounded-lg p-3 mb-4">
+                  <p className="text-xs text-yellow-400 font-medium mb-2 flex items-center gap-1">
+                    <Lock size={12} /> Account constraints:
+                  </p>
+                  <div className="space-y-1">
+                    {currentAccount.pinned_stats.map((field: string) => {
+                      const value = (stats as unknown as Record<string, number>)[field];
+                      const label = field.replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase());
+                      return (
+                        <div key={field} className="flex justify-between text-sm">
+                          <span className="text-gray-300">{label}</span>
+                          <span className="text-yellow-400 font-mono">
+                            {typeof value === 'number' ? value.toLocaleString(undefined, { maximumFractionDigits: 4 }) : 'N/A'}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {bots.some(b => (b.pinned_stats?.length ?? 0) > 0) && (
+                <div className="bg-slate-700/50 rounded-lg p-3 mb-4">
+                  <p className="text-xs text-blue-400 font-medium mb-2 flex items-center gap-1">
+                    <Lock size={12} /> Bot-level constraints:
+                  </p>
+                  <div className="space-y-1">
+                    {bots.filter(b => (b.pinned_stats?.length ?? 0) > 0).map(b => (
+                      <div key={b.id} className="text-sm text-gray-300">
+                        <span className="font-medium">{b.name}:</span>{' '}
+                        {b.pinned_stats.map(f => f.replace(/_/g, ' ')).join(', ')}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {bots.some(b => b.is_pinned) && (
+                <div className="bg-slate-700/50 rounded-lg p-3 mb-4">
+                  <p className="text-xs text-gray-400 font-medium mb-2">
+                    Frozen bots (will be skipped): {bots.filter(b => b.is_pinned).map(b => b.name).join(', ')}
+                  </p>
+                </div>
+              )}
+
+              <div className="flex justify-end gap-3">
+                <button
+                  onClick={() => setShowRegenerate(false)}
+                  className="px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg text-sm transition-colors"
+                  disabled={regenerating}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={async () => {
+                    setRegenerating(true);
+                    try {
+                      await api.regenerateAccount(currentAccount.id);
+                      loadData();
+                    } catch (e) {
+                      console.error('Account regeneration failed:', e);
+                      alert(`Regeneration failed: ${e instanceof Error ? e.message : 'Unknown error'}`);
+                    } finally {
+                      setRegenerating(false);
+                      setShowRegenerate(false);
+                    }
+                  }}
+                  disabled={regenerating}
+                  className="flex items-center gap-2 px-4 py-2 bg-purple-600 hover:bg-purple-500 disabled:bg-purple-800 disabled:text-gray-400 rounded-lg text-sm font-medium transition-colors"
+                >
+                  {regenerating ? (
+                    <>
+                      <RefreshCw size={14} className="animate-spin" /> Regenerating...
+                    </>
+                  ) : (
+                    <>
+                      <RefreshCw size={14} /> Regenerate
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     );
   };
@@ -595,7 +807,7 @@ function App() {
               <RefreshCw size={16} />
             </button>
             <button
-              onClick={() => setShowRegenerate(true)}
+              onClick={() => setShowRegenerate('bot')}
               className="flex items-center gap-2 px-4 py-2 bg-purple-600 hover:bg-purple-500 rounded-lg text-sm font-medium transition-colors"
               title="Regenerate trades while keeping locked stat values fixed"
             >
@@ -691,7 +903,7 @@ function App() {
           />
         )}
 
-        {showRegenerate && currentBot && (
+        {showRegenerate === 'bot' && currentBot && (
           <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
             <div className="bg-slate-800 rounded-lg border border-slate-700 p-6 w-full max-w-md">
               <h2 className="text-lg font-bold mb-4">Regenerate Stats</h2>

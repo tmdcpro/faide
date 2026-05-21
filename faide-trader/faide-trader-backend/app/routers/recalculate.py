@@ -967,13 +967,46 @@ async def regenerate_bot(
     )
 
 
+async def _get_account_stats(db: AsyncSession, account: Account) -> dict:
+    """Get current aggregated stats for an account."""
+    result = await db.execute(select(Bot).where(Bot.account_id == account.id))
+    bots = list(result.scalars().all())
+    total_pnl = 0.0
+    total_trades = 0
+    total_wins = 0
+    for bot in bots:
+        trade_result = await db.execute(
+            select(Trade).where(Trade.bot_id == bot.id).order_by(Trade.entry_time)
+        )
+        bot_trades = list(trade_result.scalars().all())
+        bot_stats = calculate_stats_from_trades(bot_trades, account.initial_balance)
+        total_pnl += bot_stats.get("net_pnl", 0.0)
+        total_trades += bot_stats.get("total_trades", 0)
+        total_wins += bot_stats.get("win_count", 0)
+    return {
+        "total_pnl": round(total_pnl, 2),
+        "net_pnl": round(total_pnl, 2),
+        "total_trades": total_trades,
+        "win_count": total_wins,
+        "loss_count": total_trades - total_wins,
+        "win_rate": round(total_wins / total_trades * 100, 2) if total_trades > 0 else 0.0,
+        "current_balance": round(account.initial_balance + total_pnl, 2),
+    }
+
+
 @router.post("/accounts/{account_id}/regenerate", response_model=dict)
 async def regenerate_account(
     account_id: int,
     data: RegenerateRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    """Regenerate trades for all unlocked bots in an account."""
+    """
+    Regenerate trades for all unlocked bots in an account.
+
+    Account-level pinned_stats are respected as constraints.
+    If account has total_pnl pinned, the target is distributed proportionally
+    across unlocked bots (subtracting frozen bots' contribution).
+    """
     account = await db.get(Account, account_id)
     if not account:
         raise HTTPException(status_code=404, detail="Account not found")
@@ -982,6 +1015,7 @@ async def regenerate_account(
     bots = list(result.scalars().all())
 
     unlocked_bots = [b for b in bots if not b.is_pinned]
+    locked_bots = [b for b in bots if b.is_pinned]
     if not unlocked_bots:
         raise HTTPException(status_code=400, detail="All bots are locked")
 
@@ -998,6 +1032,45 @@ async def regenerate_account(
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid end_date format")
 
+    # Build account-level constraints from pinned_stats
+    account_constraints: dict[str, float] = {}
+    if account.pinned_stats:
+        acct_stats = await _get_account_stats(db, account)
+        for field in account.pinned_stats:
+            if field in acct_stats:
+                account_constraints[field] = acct_stats[field]
+
+    # Calculate frozen bots' contribution to subtract from account targets
+    frozen_pnl = 0.0
+    frozen_trades = 0
+    frozen_wins = 0
+    for bot in locked_bots:
+        trade_result = await db.execute(
+            select(Trade).where(Trade.bot_id == bot.id).order_by(Trade.entry_time)
+        )
+        bot_trades = list(trade_result.scalars().all())
+        bot_stats = calculate_stats_from_trades(bot_trades, account.initial_balance)
+        frozen_pnl += bot_stats.get("net_pnl", 0.0)
+        frozen_trades += bot_stats.get("total_trades", 0)
+        frozen_wins += bot_stats.get("win_count", 0)
+
+    # Distribute account-level constraints across unlocked bots
+    bot_extra_constraints: dict[int, dict[str, float]] = {}
+    num_unlocked = len(unlocked_bots)
+
+    if "total_pnl" in account_constraints or "net_pnl" in account_constraints:
+        target_key = "total_pnl" if "total_pnl" in account_constraints else "net_pnl"
+        target_total = account_constraints[target_key]
+        distributable = target_total - frozen_pnl
+        per_bot = distributable / num_unlocked if num_unlocked > 0 else 0
+        for bot in unlocked_bots:
+            bot_extra_constraints.setdefault(bot.id, {})["net_pnl"] = per_bot
+
+    if "win_rate" in account_constraints:
+        target_wr = account_constraints["win_rate"]
+        for bot in unlocked_bots:
+            bot_extra_constraints.setdefault(bot.id, {})["win_rate"] = target_wr
+
     bot_results = {}
     for bot in unlocked_bots:
         stats = await regenerate_bot_trades(
@@ -1005,6 +1078,8 @@ async def regenerate_account(
             num_trades=data.num_trades,
             start_date=start_date,
             end_date=end_date,
+            extra_constraints=bot_extra_constraints.get(bot.id),
+            skip_account_recalc=True,
         )
         bot_results[bot.name] = stats
 
@@ -1017,6 +1092,7 @@ async def regenerate_account(
         "bots_skipped_locked": len(bots) - len(unlocked_bots),
         "bot_results": bot_results,
         "account_stats": account_stats,
+        "constraints_applied": account_constraints,
     }
 
 
@@ -1026,13 +1102,23 @@ async def regenerate_portfolio(
     data: RegenerateRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    """Regenerate trades for all unlocked bots across all unlocked accounts in a portfolio."""
+    """
+    Regenerate trades for all unlocked bots across all unlocked accounts in a portfolio.
+
+    Portfolio-level pinned_stats are respected as constraints.
+    If portfolio has total_pnl pinned, the target is distributed proportionally
+    across unlocked accounts, then down to their unlocked bots.
+    """
+    portfolio = await db.get(Portfolio, portfolio_id)
+    if not portfolio:
+        raise HTTPException(status_code=404, detail="Portfolio not found")
+
     result = await db.execute(
         select(Account).where(Account.portfolio_id == portfolio_id)
     )
     accounts = list(result.scalars().all())
     if not accounts:
-        raise HTTPException(status_code=404, detail="Portfolio not found or has no accounts")
+        raise HTTPException(status_code=400, detail="Portfolio has no accounts")
 
     start_date = None
     end_date = None
@@ -1047,27 +1133,84 @@ async def regenerate_portfolio(
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid end_date format")
 
+    # Build portfolio-level constraints from pinned_stats
+    portfolio_constraints: dict[str, float] = {}
+    if portfolio.pinned_stats:
+        port_stats = await _get_portfolio_stats(db, portfolio_id, accounts)
+        for field in portfolio.pinned_stats:
+            if field in port_stats:
+                portfolio_constraints[field] = port_stats[field]
+
+    unlocked_accounts = [a for a in accounts if not a.is_pinned]
+    locked_accounts = [a for a in accounts if a.is_pinned]
+
+    # Calculate frozen accounts' contribution
+    frozen_pnl = 0.0
+    for acct in locked_accounts:
+        frozen_pnl += acct.current_balance - acct.initial_balance
+
+    # Distribute portfolio-level total_pnl constraint across unlocked accounts
+    account_pnl_targets: dict[int, float] = {}
+    if "total_pnl" in portfolio_constraints or "net_pnl" in portfolio_constraints:
+        target_key = "total_pnl" if "total_pnl" in portfolio_constraints else "net_pnl"
+        target_total = portfolio_constraints[target_key]
+        distributable = target_total - frozen_pnl
+        num_unlocked_accts = len(unlocked_accounts)
+        if num_unlocked_accts > 0:
+            per_acct = distributable / num_unlocked_accts
+            for acct in unlocked_accounts:
+                account_pnl_targets[acct.id] = per_acct
+
     total_regenerated = 0
     total_skipped = 0
 
-    for account in accounts:
-        if account.is_pinned:
-            bot_result = await db.execute(select(Bot).where(Bot.account_id == account.id))
-            total_skipped += len(list(bot_result.scalars().all()))
-            continue
+    for account in locked_accounts:
+        bot_result = await db.execute(select(Bot).where(Bot.account_id == account.id))
+        total_skipped += len(list(bot_result.scalars().all()))
 
+    for account in unlocked_accounts:
         bot_result = await db.execute(select(Bot).where(Bot.account_id == account.id))
         bots = list(bot_result.scalars().all())
+        unlocked_bots = [b for b in bots if not b.is_pinned]
+        locked_bots = [b for b in bots if b.is_pinned]
 
-        for bot in bots:
-            if bot.is_pinned:
-                total_skipped += 1
-                continue
+        # Calculate frozen bots' contribution within this account
+        acct_frozen_pnl = 0.0
+        for bot in locked_bots:
+            trade_result = await db.execute(
+                select(Trade).where(Trade.bot_id == bot.id)
+            )
+            bot_trades = list(trade_result.scalars().all())
+            bot_stats = calculate_stats_from_trades(bot_trades, account.initial_balance)
+            acct_frozen_pnl += bot_stats.get("net_pnl", 0.0)
+            total_skipped += 1
+
+        # Build extra constraints for each unlocked bot
+        for bot in unlocked_bots:
+            extra: dict[str, float] = {}
+
+            # Push down account-level P&L target
+            if account.id in account_pnl_targets and unlocked_bots:
+                acct_target = account_pnl_targets[account.id]
+                bot_share = (acct_target - acct_frozen_pnl) / len(unlocked_bots)
+                extra["net_pnl"] = bot_share
+
+            # Push down account-level pinned win_rate
+            if account.pinned_stats and "win_rate" in account.pinned_stats:
+                acct_stats = await _get_account_stats(db, account)
+                extra["win_rate"] = acct_stats.get("win_rate", 50.0)
+
+            # Push down portfolio-level pinned win_rate
+            if "win_rate" in portfolio_constraints and "win_rate" not in extra:
+                extra["win_rate"] = portfolio_constraints["win_rate"]
+
             await regenerate_bot_trades(
                 db, bot.id,
                 num_trades=data.num_trades,
                 start_date=start_date,
                 end_date=end_date,
+                extra_constraints=extra if extra else None,
+                skip_account_recalc=True,
             )
             total_regenerated += 1
 
@@ -1081,4 +1224,28 @@ async def regenerate_portfolio(
         "bots_regenerated": total_regenerated,
         "bots_skipped_locked": total_skipped,
         "portfolio_stats": portfolio_stats,
+        "constraints_applied": portfolio_constraints,
+    }
+
+
+async def _get_portfolio_stats(db: AsyncSession, portfolio_id: int, accounts: list[Account]) -> dict:
+    """Get current aggregated stats for a portfolio."""
+    total_pnl = 0.0
+    total_balance = 0.0
+    total_trades = 0
+    total_wins = 0
+    for account in accounts:
+        acct_stats = await _get_account_stats(db, account)
+        total_pnl += acct_stats.get("net_pnl", 0.0)
+        total_balance += acct_stats.get("current_balance", account.initial_balance)
+        total_trades += acct_stats.get("total_trades", 0)
+        total_wins += acct_stats.get("win_count", 0)
+    return {
+        "total_pnl": round(total_pnl, 2),
+        "net_pnl": round(total_pnl, 2),
+        "total_balance": round(total_balance, 2),
+        "total_trades": total_trades,
+        "win_count": total_wins,
+        "win_rate": round(total_wins / total_trades * 100, 2) if total_trades > 0 else 0.0,
+        "account_count": len(accounts),
     }
