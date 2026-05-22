@@ -381,3 +381,21 @@ class StatsResponse(BaseModel):
     net_pnl: float = 0.0
     current_balance: float = 0.0
     roi_percent: float = 0.0
+
+
+# --- Equity Curve ---
+class EquityCurvePoint(BaseModel):
+    date: str
+    balance: float
+    cumulative_pnl: float
+    drawdown: float
+    drawdown_percent: float
+    peak_balance: float
+    daily_pnl: float
+    trade_count: int
+    win_count: int
+    loss_count: int
+    win_rate: float
+    deposits: float = 0.0
+    withdrawals: float = 0.0
+    net_deposits_cumulative: float = 0.0

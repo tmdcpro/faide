@@ -1,4 +1,5 @@
-from datetime import datetime
+from collections import defaultdict
+from datetime import datetime, date as date_type
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select, func
@@ -22,6 +23,7 @@ from app.schemas import (
     SetConstraintResponse,
     RegenerateRequest,
     RegenerateResponse,
+    EquityCurvePoint,
 )
 from app.services.calculation_engine import get_account_net_deposits
 from app.services.calculation_engine import (
@@ -713,6 +715,153 @@ async def get_portfolio_period_pnl(
     all_trades.sort(key=lambda t: t.entry_time)
     periods = aggregate_period_pnl(all_trades, period_type, total_initial if total_initial > 0 else 10000.0)
     return [PeriodPnlResponse(**p) for p in periods]
+
+
+def _build_equity_curve(
+    trades: list[Trade],
+    initial_balance: float,
+    transactions: list[Transaction],
+) -> list[dict]:
+    """Build daily equity curve from trades and transactions."""
+    # Group trades by day
+    daily_trades: dict[str, list[Trade]] = defaultdict(list)
+    for t in trades:
+        exit_dt = t.exit_time or t.entry_time
+        day_key = exit_dt.strftime("%Y-%m-%d") if hasattr(exit_dt, "strftime") else str(exit_dt)[:10]
+        daily_trades[day_key].append(t)
+
+    # Group transactions by day
+    daily_deposits: dict[str, float] = defaultdict(float)
+    daily_withdrawals: dict[str, float] = defaultdict(float)
+    for tx in transactions:
+        day_key = tx.date.strftime("%Y-%m-%d") if hasattr(tx.date, "strftime") else str(tx.date)[:10]
+        if tx.type == "deposit":
+            daily_deposits[day_key] += tx.amount
+        else:
+            daily_withdrawals[day_key] += tx.amount
+
+    # Collect all dates
+    all_dates: set[str] = set()
+    all_dates.update(daily_trades.keys())
+    all_dates.update(daily_deposits.keys())
+    all_dates.update(daily_withdrawals.keys())
+
+    if not all_dates:
+        return []
+
+    sorted_dates = sorted(all_dates)
+
+    results = []
+    cumulative_pnl = 0.0
+    net_deposits_cumulative = 0.0
+    peak_balance = initial_balance
+
+    for day in sorted_dates:
+        day_trades = daily_trades.get(day, [])
+        day_pnl = sum(t.pnl for t in day_trades)
+        day_trade_count = len(day_trades)
+        day_wins = sum(1 for t in day_trades if t.pnl > 0)
+        day_losses = day_trade_count - day_wins
+
+        deps = daily_deposits.get(day, 0.0)
+        wds = daily_withdrawals.get(day, 0.0)
+        net_deposits_cumulative += deps - wds
+        cumulative_pnl += day_pnl
+
+        balance = initial_balance + cumulative_pnl + net_deposits_cumulative
+        peak_balance = max(peak_balance, balance)
+        drawdown = peak_balance - balance
+        drawdown_pct = (drawdown / peak_balance * 100) if peak_balance > 0 else 0.0
+
+        results.append({
+            "date": day,
+            "balance": round(balance, 2),
+            "cumulative_pnl": round(cumulative_pnl, 2),
+            "drawdown": round(drawdown, 2),
+            "drawdown_percent": round(drawdown_pct, 2),
+            "peak_balance": round(peak_balance, 2),
+            "daily_pnl": round(day_pnl, 2),
+            "trade_count": day_trade_count,
+            "win_count": day_wins,
+            "loss_count": day_losses,
+            "win_rate": round(day_wins / day_trade_count * 100, 1) if day_trade_count > 0 else 0.0,
+            "deposits": round(deps, 2),
+            "withdrawals": round(wds, 2),
+            "net_deposits_cumulative": round(net_deposits_cumulative, 2),
+        })
+
+    return results
+
+
+@router.get("/accounts/{account_id}/equity-curve", response_model=list[EquityCurvePoint])
+async def get_account_equity_curve(
+    account_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Get daily equity curve for an account."""
+    account = await db.get(Account, account_id)
+    if not account:
+        raise HTTPException(status_code=404, detail="Account not found")
+
+    result = await db.execute(select(Bot).where(Bot.account_id == account_id))
+    bots = list(result.scalars().all())
+
+    all_trades: list[Trade] = []
+    for bot in bots:
+        result = await db.execute(
+            select(Trade).where(Trade.bot_id == bot.id).order_by(Trade.entry_time)
+        )
+        all_trades.extend(result.scalars().all())
+    all_trades.sort(key=lambda t: (t.exit_time or t.entry_time))
+
+    result = await db.execute(
+        select(Transaction)
+        .where(Transaction.account_id == account_id)
+        .order_by(Transaction.date)
+    )
+    transactions = list(result.scalars().all())
+
+    curve = _build_equity_curve(all_trades, account.initial_balance, transactions)
+    return [EquityCurvePoint(**p) for p in curve]
+
+
+@router.get("/portfolios/{portfolio_id}/equity-curve", response_model=list[EquityCurvePoint])
+async def get_portfolio_equity_curve(
+    portfolio_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Get daily equity curve for an entire portfolio."""
+    result = await db.execute(
+        select(Account).where(Account.portfolio_id == portfolio_id)
+    )
+    accounts = list(result.scalars().all())
+    if not accounts:
+        return []
+
+    all_trades: list[Trade] = []
+    all_transactions: list[Transaction] = []
+    total_initial = 0.0
+
+    for account in accounts:
+        total_initial += account.initial_balance
+        result = await db.execute(select(Bot).where(Bot.account_id == account.id))
+        bots = list(result.scalars().all())
+        for bot in bots:
+            result = await db.execute(
+                select(Trade).where(Trade.bot_id == bot.id).order_by(Trade.entry_time)
+            )
+            all_trades.extend(result.scalars().all())
+        result = await db.execute(
+            select(Transaction)
+            .where(Transaction.account_id == account.id)
+            .order_by(Transaction.date)
+        )
+        all_transactions.extend(result.scalars().all())
+
+    all_trades.sort(key=lambda t: (t.exit_time or t.entry_time))
+
+    curve = _build_equity_curve(all_trades, total_initial, all_transactions)
+    return [EquityCurvePoint(**p) for p in curve]
 
 
 @router.put("/bots/{bot_id}/period-pnl/{period_key}")

@@ -21,6 +21,7 @@ import { CreateBotDialog } from '@/components/CreateBotDialog';
 import { EditBotDialog } from '@/components/EditBotDialog';
 import { SymbolPnlView } from '@/components/SymbolPnlView';
 import { TransactionsView } from '@/components/TransactionsView';
+import { EquityChart } from '@/components/EquityChart';
 import {
   ChevronRight,
   Plus,
@@ -295,6 +296,9 @@ function App() {
             pinnedStatValues={currentPortfolio?.pinned_stat_values || {}}
             onRecalculated={loadData}
           />
+          <div className="mt-4">
+            <EquityChart entityType="portfolio" entityId={view.portfolioId} />
+          </div>
           <div className="mt-4">
             <PeriodPnlView entityType="portfolio" entityId={view.portfolioId} onRecalculated={loadData} />
           </div>
@@ -613,6 +617,9 @@ function App() {
               pinnedStatValues={currentAccount?.pinned_stat_values || {}}
               onRecalculated={loadData}
             />
+            <div className="mt-4">
+              <EquityChart entityType="account" entityId={view.accountId} />
+            </div>
             <div className="mt-4">
               <PeriodPnlView entityType="account" entityId={view.accountId} onRecalculated={loadData} />
             </div>

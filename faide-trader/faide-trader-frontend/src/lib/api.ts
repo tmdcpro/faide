@@ -194,6 +194,23 @@ export interface Transaction {
   updated_at: string;
 }
 
+export interface EquityCurvePoint {
+  date: string;
+  balance: number;
+  cumulative_pnl: number;
+  drawdown: number;
+  drawdown_percent: number;
+  peak_balance: number;
+  daily_pnl: number;
+  trade_count: number;
+  win_count: number;
+  loss_count: number;
+  win_rate: number;
+  deposits: number;
+  withdrawals: number;
+  net_deposits_cumulative: number;
+}
+
 export interface RecalculateResult {
   updated_trades: Trade[];
   updated_pnl_records: PnlRecord[];
@@ -316,6 +333,12 @@ export const api = {
     request<{ portfolio_id: number; bots_regenerated: number; bots_skipped_locked: number; portfolio_stats: Record<string, number> }>(
       `/api/portfolios/${portfolioId}/regenerate`, { method: 'POST', body: JSON.stringify(data || {}) }
     ),
+
+  // Equity Curve
+  getAccountEquityCurve: (accountId: number) =>
+    request<EquityCurvePoint[]>(`/api/accounts/${accountId}/equity-curve`),
+  getPortfolioEquityCurve: (portfolioId: number) =>
+    request<EquityCurvePoint[]>(`/api/portfolios/${portfolioId}/equity-curve`),
 
   // Transactions
   listTransactions: (accountId: number) =>
