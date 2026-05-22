@@ -22,6 +22,7 @@ import { EditBotDialog } from '@/components/EditBotDialog';
 import { SymbolPnlView } from '@/components/SymbolPnlView';
 import { TransactionsView } from '@/components/TransactionsView';
 import { EquityChart } from '@/components/EquityChart';
+import { exportPortfolioReport } from '@/lib/exportReport';
 import {
   ChevronRight,
   Plus,
@@ -257,6 +258,19 @@ function App() {
         <div className="flex items-center gap-2">
           <button onClick={loadData} className="p-2 hover:bg-slate-700 rounded-lg transition-colors" title="Refresh">
             <RefreshCw size={16} />
+          </button>
+          <button
+            onClick={async () => {
+              try {
+                await exportPortfolioReport(view.portfolioId);
+              } catch (e) {
+                alert('Export failed: ' + (e instanceof Error ? e.message : 'Unknown error'));
+              }
+            }}
+            className="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 rounded-lg text-sm font-medium transition-colors"
+            title="Export read-only HTML report"
+          >
+            <Download size={16} /> Export Report
           </button>
           <button
             onClick={() => setShowRegenerate('portfolio')}
