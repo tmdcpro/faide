@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.models.portfolio import Transaction, Account
 from app.schemas import TransactionCreate, TransactionUpdate, TransactionResponse
+from app.services.calculation_engine import recalculate_account
 
 router = APIRouter(prefix="/api", tags=["transactions"])
 
@@ -40,6 +41,8 @@ async def create_transaction(account_id: int, data: TransactionCreate, db: Async
     db.add(tx)
     await db.commit()
     await db.refresh(tx)
+    await recalculate_account(db, account_id)
+    await db.commit()
     return tx
 
 
@@ -60,8 +63,11 @@ async def update_transaction(tx_id: int, data: TransactionUpdate, db: AsyncSessi
     if data.date is not None:
         tx.date = datetime.fromisoformat(data.date)
 
+    account_id = tx.account_id
     await db.commit()
     await db.refresh(tx)
+    await recalculate_account(db, account_id)
+    await db.commit()
     return tx
 
 
@@ -71,7 +77,10 @@ async def delete_transaction(tx_id: int, db: AsyncSession = Depends(get_db)):
     if not tx:
         raise HTTPException(status_code=404, detail="Transaction not found")
 
+    account_id = tx.account_id
     await db.delete(tx)
+    await db.commit()
+    await recalculate_account(db, account_id)
     await db.commit()
     return {"status": "deleted"}
 
