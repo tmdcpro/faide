@@ -18,6 +18,8 @@ class PortfolioResponse(BaseModel):
     id: int
     name: str
     description: str
+    pinned_stats: list[str] = []
+    pinned_stat_values: dict[str, float | None] = {}
     created_at: datetime
     updated_at: datetime
     account_count: int = 0
@@ -39,6 +41,7 @@ class AccountUpdate(BaseModel):
     exchange: Optional[str] = None
     initial_balance: Optional[float] = None
     current_balance: Optional[float] = None
+    is_pinned: Optional[bool] = None
 
 
 class AccountResponse(BaseModel):
@@ -48,6 +51,9 @@ class AccountResponse(BaseModel):
     exchange: str
     initial_balance: float
     current_balance: float
+    is_pinned: bool = False
+    pinned_stats: list[str] = []
+    pinned_stat_values: dict[str, float | None] = {}
     created_at: datetime
     updated_at: datetime
     bot_count: int = 0
@@ -73,6 +79,8 @@ class BotUpdate(BaseModel):
     symbol: Optional[str] = None
     symbols: Optional[list[str]] = None
     is_active: Optional[bool] = None
+    is_pinned: Optional[bool] = None
+    pinned_stats: Optional[list[str]] = None
 
 
 class BotResponse(BaseModel):
@@ -83,6 +91,9 @@ class BotResponse(BaseModel):
     symbol: str
     symbols: list[str] = []
     is_active: bool
+    is_pinned: bool = False
+    pinned_stats: list[str] = []
+    pinned_stat_values: dict[str, float | None] = {}
     created_at: datetime
     updated_at: datetime
     total_pnl: float = 0.0
@@ -203,6 +214,20 @@ class TradeGenerateResponse(BaseModel):
     end_date: str
 
 
+class RegenerateRequest(BaseModel):
+    num_trades: Optional[int] = None
+    start_date: Optional[str] = None  # ISO date string
+    end_date: Optional[str] = None  # ISO date string
+
+
+class RegenerateResponse(BaseModel):
+    generated: int
+    bot_id: int
+    constraints_applied: dict[str, float] = {}
+    bot_stats: dict = {}
+    final_stats: dict = {}
+
+
 # --- Market Data ---
 class MarketDataImport(BaseModel):
     exchange: str
@@ -230,6 +255,40 @@ class RecalculateRequest(BaseModel):
     field: str
     new_value: float
     pinned_fields: list[str] = []
+    period_key: Optional[str] = None  # for per-period stat editing
+    period_type: Optional[str] = None  # "daily", "weekly", "monthly"
+
+
+class TogglePinRequest(BaseModel):
+    entity_type: str  # "bot", "account", "trade", "period"
+    entity_id: int
+    field: Optional[str] = None  # for stat-level pin; None for entity-level
+    period_key: Optional[str] = None  # for period-level pin
+    period_type: Optional[str] = None
+    pinned: bool = True
+
+
+class TogglePinResponse(BaseModel):
+    success: bool
+    entity_type: str
+    entity_id: int
+    field: Optional[str] = None
+    pinned: bool
+
+
+class SetConstraintRequest(BaseModel):
+    entity_type: str  # "bot", "account", "portfolio"
+    entity_id: int
+    field: str
+    value: float
+
+
+class SetConstraintResponse(BaseModel):
+    success: bool
+    entity_type: str
+    entity_id: int
+    field: str
+    value: float
 
 
 class RecalculateResponse(BaseModel):
@@ -252,6 +311,12 @@ class PeriodPnlResponse(BaseModel):
     win_rate: float = 0.0
     drawdown: float = 0.0
     drawdown_percent: float = 0.0
+    avg_pnl: float = 0.0
+    best_trade: float = 0.0
+    worst_trade: float = 0.0
+    total_fees: float = 0.0
+    profit_factor: float = 0.0
+    is_pinned: bool = False
 
     model_config = {"from_attributes": True}
 
@@ -261,6 +326,37 @@ class PeriodPnlUpdate(BaseModel):
     trade_count: Optional[int] = None
     win_count: Optional[int] = None
     loss_count: Optional[int] = None
+    win_rate: Optional[float] = None
+    profit_factor: Optional[float] = None
+    is_pinned: Optional[bool] = None
+
+
+# --- Transactions ---
+class TransactionCreate(BaseModel):
+    type: str  # "deposit" or "withdrawal"
+    amount: float
+    note: str = ""
+    date: str  # ISO date string
+
+
+class TransactionUpdate(BaseModel):
+    type: Optional[str] = None
+    amount: Optional[float] = None
+    note: Optional[str] = None
+    date: Optional[str] = None
+
+
+class TransactionResponse(BaseModel):
+    id: int
+    account_id: int
+    type: str
+    amount: float
+    note: str
+    date: datetime
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
 
 
 # --- Stats ---
@@ -285,3 +381,21 @@ class StatsResponse(BaseModel):
     net_pnl: float = 0.0
     current_balance: float = 0.0
     roi_percent: float = 0.0
+
+
+# --- Equity Curve ---
+class EquityCurvePoint(BaseModel):
+    date: str
+    balance: float
+    cumulative_pnl: float
+    drawdown: float
+    drawdown_percent: float
+    peak_balance: float
+    daily_pnl: float
+    trade_count: int
+    win_count: int
+    loss_count: int
+    win_rate: float
+    deposits: float = 0.0
+    withdrawals: float = 0.0
+    net_deposits_cumulative: float = 0.0

@@ -17,6 +17,8 @@ export interface Portfolio {
   id: number;
   name: string;
   description: string;
+  pinned_stats: string[];
+  pinned_stat_values: Record<string, number | null>;
   created_at: string;
   updated_at: string;
   account_count: number;
@@ -31,6 +33,9 @@ export interface Account {
   exchange: string;
   initial_balance: number;
   current_balance: number;
+  is_pinned: boolean;
+  pinned_stats: string[];
+  pinned_stat_values: Record<string, number | null>;
   created_at: string;
   updated_at: string;
   bot_count: number;
@@ -47,6 +52,9 @@ export interface Bot {
   symbol: string;
   symbols: string[];
   is_active: boolean;
+  is_pinned: boolean;
+  pinned_stats: string[];
+  pinned_stat_values: Record<string, number | null>;
   created_at: string;
   updated_at: string;
   total_pnl: number;
@@ -126,6 +134,21 @@ export interface PeriodPnl {
   win_rate: number;
   drawdown: number;
   drawdown_percent: number;
+  avg_pnl: number;
+  best_trade: number;
+  worst_trade: number;
+  total_fees: number;
+  profit_factor: number;
+  is_pinned: boolean;
+}
+
+export interface TogglePinRequest {
+  entity_type: 'bot' | 'account' | 'portfolio' | 'trade' | 'period';
+  entity_id: number;
+  field?: string;
+  period_key?: string;
+  period_type?: string;
+  pinned: boolean;
 }
 
 export interface TradeGenerateRequest {
@@ -158,6 +181,34 @@ export interface SymbolPnl {
   loss_count: number;
   win_rate: number;
   avg_pnl: number;
+}
+
+export interface Transaction {
+  id: number;
+  account_id: number;
+  type: 'deposit' | 'withdrawal';
+  amount: number;
+  note: string;
+  date: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface EquityCurvePoint {
+  date: string;
+  balance: number;
+  cumulative_pnl: number;
+  drawdown: number;
+  drawdown_percent: number;
+  peak_balance: number;
+  daily_pnl: number;
+  trade_count: number;
+  win_count: number;
+  loss_count: number;
+  win_rate: number;
+  deposits: number;
+  withdrawals: number;
+  net_deposits_cumulative: number;
 }
 
 export interface RecalculateResult {
@@ -217,7 +268,7 @@ export const api = {
     request<PnlRecord>(`/api/pnl/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
 
   // Recalculate
-  recalculate: (data: { entity_type: string; entity_id: number; field: string; new_value: number; pinned_fields?: string[] }) =>
+  recalculate: (data: { entity_type: string; entity_id: number; field: string; new_value: number; pinned_fields?: string[]; period_key?: string; period_type?: string }) =>
     request<RecalculateResult>('/api/recalculate', { method: 'POST', body: JSON.stringify(data) }),
 
   // Stats
@@ -243,9 +294,61 @@ export const api = {
     request<PeriodPnl[]>(`/api/accounts/${accountId}/period-pnl${periodType ? `?period_type=${periodType}` : ''}`),
   getPortfolioPeriodPnl: (portfolioId: number, periodType?: string) =>
     request<PeriodPnl[]>(`/api/portfolios/${portfolioId}/period-pnl${periodType ? `?period_type=${periodType}` : ''}`),
-  updatePeriodPnl: (botId: number, periodKey: string, data: { pnl?: number }, periodType?: string) =>
+  updatePeriodPnl: (botId: number, periodKey: string, data: { pnl?: number; win_rate?: number; profit_factor?: number; is_pinned?: boolean }, periodType?: string) =>
     request<{ periods: PeriodPnl[]; bot_stats: Record<string, number> }>(
       `/api/bots/${botId}/period-pnl/${periodKey}${periodType ? `?period_type=${periodType}` : ''}`,
       { method: 'PUT', body: JSON.stringify(data) }
     ),
+  updateAccountPeriodPnl: (accountId: number, periodKey: string, data: { pnl?: number }, periodType?: string) =>
+    request<{ periods: PeriodPnl[]; account_stats: Record<string, number> }>(
+      `/api/accounts/${accountId}/period-pnl/${periodKey}${periodType ? `?period_type=${periodType}` : ''}`,
+      { method: 'PUT', body: JSON.stringify(data) }
+    ),
+  updatePortfolioPeriodPnl: (portfolioId: number, periodKey: string, data: { pnl?: number }, periodType?: string) =>
+    request<{ periods: PeriodPnl[]; portfolio_stats: Record<string, number> }>(
+      `/api/portfolios/${portfolioId}/period-pnl/${periodKey}${periodType ? `?period_type=${periodType}` : ''}`,
+      { method: 'PUT', body: JSON.stringify(data) }
+    ),
+
+  // Pin/Lock
+  togglePin: (data: TogglePinRequest) =>
+    request<{ success: boolean; entity_type: string; entity_id: number; field?: string; pinned: boolean }>(
+      '/api/toggle-pin', { method: 'POST', body: JSON.stringify(data) }
+    ),
+  setConstraint: (data: { entity_type: string; entity_id: number; field: string; value: number }) =>
+    request<{ success: boolean; entity_type: string; entity_id: number; field: string; value: number }>(
+      '/api/set-constraint', { method: 'POST', body: JSON.stringify(data) }
+    ),
+
+  // Regenerate
+  regenerateBot: (botId: number, data?: { num_trades?: number; start_date?: string; end_date?: string }) =>
+    request<{ generated: number; bot_id: number; constraints_applied: Record<string, number>; bot_stats: Record<string, number>; final_stats: Record<string, number> }>(
+      `/api/bots/${botId}/regenerate`, { method: 'POST', body: JSON.stringify(data || {}) }
+    ),
+  regenerateAccount: (accountId: number, data?: { num_trades?: number; start_date?: string; end_date?: string }) =>
+    request<{ account_id: number; bots_regenerated: number; bots_skipped_locked: number; account_stats: Record<string, number> }>(
+      `/api/accounts/${accountId}/regenerate`, { method: 'POST', body: JSON.stringify(data || {}) }
+    ),
+  regeneratePortfolio: (portfolioId: number, data?: { num_trades?: number; start_date?: string; end_date?: string }) =>
+    request<{ portfolio_id: number; bots_regenerated: number; bots_skipped_locked: number; portfolio_stats: Record<string, number> }>(
+      `/api/portfolios/${portfolioId}/regenerate`, { method: 'POST', body: JSON.stringify(data || {}) }
+    ),
+
+  // Equity Curve
+  getAccountEquityCurve: (accountId: number) =>
+    request<EquityCurvePoint[]>(`/api/accounts/${accountId}/equity-curve`),
+  getPortfolioEquityCurve: (portfolioId: number) =>
+    request<EquityCurvePoint[]>(`/api/portfolios/${portfolioId}/equity-curve`),
+
+  // Transactions
+  listTransactions: (accountId: number) =>
+    request<Transaction[]>(`/api/accounts/${accountId}/transactions`),
+  listPortfolioTransactions: (portfolioId: number) =>
+    request<Transaction[]>(`/api/portfolios/${portfolioId}/transactions`),
+  createTransaction: (accountId: number, data: { type: string; amount: number; note?: string; date: string }) =>
+    request<Transaction>(`/api/accounts/${accountId}/transactions`, { method: 'POST', body: JSON.stringify(data) }),
+  updateTransaction: (txId: number, data: Partial<Transaction>) =>
+    request<Transaction>(`/api/transactions/${txId}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteTransaction: (txId: number) =>
+    request<{ status: string }>(`/api/transactions/${txId}`, { method: 'DELETE' }),
 };

@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { api, type PeriodPnl } from '@/lib/api';
 import { EditableField } from '@/components/EditableField';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts';
-import { TrendingDown } from 'lucide-react';
+import { TrendingDown, Lock, Unlock } from 'lucide-react';
 
 interface PeriodPnlViewProps {
   entityType: 'bot' | 'account' | 'portfolio';
@@ -49,13 +49,45 @@ export function PeriodPnlView({ entityType, entityId, onRecalculated }: PeriodPn
   }, [loadPeriods]);
 
   const handlePeriodPnlEdit = async (periodKey: string, newPnl: number) => {
-    if (entityType !== 'bot') return;
     try {
-      await api.updatePeriodPnl(entityId, periodKey, { pnl: newPnl }, periodType);
+      if (entityType === 'bot') {
+        await api.updatePeriodPnl(entityId, periodKey, { pnl: newPnl }, periodType);
+      } else if (entityType === 'account') {
+        await api.updateAccountPeriodPnl(entityId, periodKey, { pnl: newPnl }, periodType);
+      } else {
+        await api.updatePortfolioPeriodPnl(entityId, periodKey, { pnl: newPnl }, periodType);
+      }
       await loadPeriods();
       onRecalculated?.();
     } catch (e) {
       console.error('Failed to update period P&L:', e);
+    }
+  };
+
+  const handlePeriodStatEdit = async (periodKey: string, field: string, value: number) => {
+    if (entityType !== 'bot') return;
+    try {
+      await api.updatePeriodPnl(entityId, periodKey, { [field]: value } as Record<string, number>, periodType);
+      await loadPeriods();
+      onRecalculated?.();
+    } catch (e) {
+      console.error(`Failed to update period ${field}:`, e);
+    }
+  };
+
+  const handleTogglePeriodPin = async (periodKey: string, currentPinned: boolean) => {
+    if (entityType !== 'bot') return;
+    try {
+      await api.togglePin({
+        entity_type: 'period',
+        entity_id: entityId,
+        period_key: periodKey,
+        period_type: periodType,
+        pinned: !currentPinned,
+      });
+      await loadPeriods();
+    } catch (e) {
+      console.error('Failed to toggle period pin:', e);
     }
   };
 
@@ -129,31 +161,31 @@ export function PeriodPnlView({ entityType, entityId, onRecalculated }: PeriodPn
                 <tr className="text-xs text-gray-500 border-b border-slate-700">
                   <th className="text-left py-2 px-2">Period</th>
                   <th className="text-right py-2 px-2">P&L</th>
-                  <th className="text-right py-2 px-2">Cumulative</th>
+                  <th className="text-right py-2 px-2">Cumul.</th>
                   <th className="text-right py-2 px-2">Trades</th>
                   <th className="text-right py-2 px-2">W/L</th>
                   <th className="text-right py-2 px-2">Win %</th>
+                  <th className="text-right py-2 px-2">Avg</th>
+                  <th className="text-right py-2 px-2">PF</th>
                   <th className="text-right py-2 px-2">DD $</th>
                   <th className="text-right py-2 px-2">DD %</th>
+                  {entityType === 'bot' && <th className="text-center py-2 px-2">Pin</th>}
                 </tr>
               </thead>
               <tbody>
                 {periods.map((p) => (
-                  <tr key={p.period} className="border-b border-slate-700/50 hover:bg-slate-700/30">
-                    <td className="py-2 px-2 font-mono text-xs">{p.period}</td>
+                  <tr key={p.period} className={`border-b border-slate-700/50 hover:bg-slate-700/30 ${p.is_pinned ? 'bg-yellow-900/10' : ''}`}>
+                    <td className="py-2 px-2 font-mono text-xs">
+                      {p.period}
+                      {p.is_pinned && <Lock size={10} className="inline ml-1 text-yellow-400" />}
+                    </td>
                     <td className="text-right py-2 px-2">
-                      {entityType === 'bot' ? (
-                        <EditableField
-                          value={p.pnl}
-                          onSave={(v) => handlePeriodPnlEdit(p.period, v as number)}
-                          prefix="$"
-                          className={p.pnl >= 0 ? 'text-green-400' : 'text-red-400'}
-                        />
-                      ) : (
-                        <span className={`font-mono ${p.pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                          ${formatNum(p.pnl)}
-                        </span>
-                      )}
+                      <EditableField
+                        value={p.pnl}
+                        onSave={(v) => handlePeriodPnlEdit(p.period, v as number)}
+                        prefix="$"
+                        className={p.pnl >= 0 ? 'text-green-400' : 'text-red-400'}
+                      />
                     </td>
                     <td className={`text-right py-2 px-2 font-mono ${p.cumulative_pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
                       ${formatNum(p.cumulative_pnl)}
@@ -164,8 +196,35 @@ export function PeriodPnlView({ entityType, entityId, onRecalculated }: PeriodPn
                       /
                       <span className="text-red-400">{p.loss_count}</span>
                     </td>
-                    <td className={`text-right py-2 px-2 font-mono ${p.win_rate >= 50 ? 'text-green-400' : 'text-red-400'}`}>
-                      {formatNum(p.win_rate)}%
+                    <td className="text-right py-2 px-2">
+                      {entityType === 'bot' ? (
+                        <EditableField
+                          value={p.win_rate}
+                          onSave={(v) => handlePeriodStatEdit(p.period, 'win_rate', v as number)}
+                          suffix="%"
+                          className={p.win_rate >= 50 ? 'text-green-400' : 'text-red-400'}
+                        />
+                      ) : (
+                        <span className={`font-mono ${p.win_rate >= 50 ? 'text-green-400' : 'text-red-400'}`}>
+                          {formatNum(p.win_rate)}%
+                        </span>
+                      )}
+                    </td>
+                    <td className={`text-right py-2 px-2 font-mono ${p.avg_pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                      ${formatNum(p.avg_pnl)}
+                    </td>
+                    <td className="text-right py-2 px-2">
+                      {entityType === 'bot' ? (
+                        <EditableField
+                          value={p.profit_factor}
+                          onSave={(v) => handlePeriodStatEdit(p.period, 'profit_factor', v as number)}
+                          className={p.profit_factor > 1 ? 'text-green-400' : 'text-red-400'}
+                        />
+                      ) : (
+                        <span className={`font-mono ${p.profit_factor > 1 ? 'text-green-400' : 'text-red-400'}`}>
+                          {formatNum(p.profit_factor)}
+                        </span>
+                      )}
                     </td>
                     <td className="text-right py-2 px-2 font-mono text-red-400">
                       {p.drawdown > 0 ? `$${formatNum(p.drawdown)}` : '-'}
@@ -173,6 +232,17 @@ export function PeriodPnlView({ entityType, entityId, onRecalculated }: PeriodPn
                     <td className="text-right py-2 px-2 font-mono text-red-400">
                       {p.drawdown_percent > 0 ? `${formatNum(p.drawdown_percent)}%` : '-'}
                     </td>
+                    {entityType === 'bot' && (
+                      <td className="text-center py-2 px-2">
+                        <button
+                          onClick={() => handleTogglePeriodPin(p.period, p.is_pinned)}
+                          className={`transition-colors ${p.is_pinned ? 'text-yellow-400' : 'text-gray-500 hover:text-yellow-400'}`}
+                          title={p.is_pinned ? 'Unlock period' : 'Lock period'}
+                        >
+                          {p.is_pinned ? <Lock size={14} /> : <Unlock size={14} />}
+                        </button>
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>

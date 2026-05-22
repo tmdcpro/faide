@@ -11,6 +11,7 @@ from app.routers import (
     trades_router,
     recalculate_router,
     market_data_router,
+    transactions_router,
 )
 
 
@@ -37,6 +38,7 @@ app.include_router(bots_router)
 app.include_router(trades_router)
 app.include_router(recalculate_router)
 app.include_router(market_data_router)
+app.include_router(transactions_router)
 
 
 @app.get("/healthz")

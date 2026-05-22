@@ -4,9 +4,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.database import get_db
-from app.models.portfolio import Account, Bot, Trade, Portfolio
+from app.models.portfolio import Account, Bot, Trade, Portfolio, Transaction
 from app.schemas import AccountCreate, AccountUpdate, AccountResponse
-from app.services.calculation_engine import recalculate_account
+from app.services.calculation_engine import recalculate_account, get_account_net_deposits
 
 router = APIRouter(prefix="/api", tags=["accounts"])
 
@@ -26,7 +26,8 @@ async def list_accounts(portfolio_id: int, db: AsyncSession = Depends(get_db)):
 
     responses = []
     for a in accounts:
-        total_pnl = a.current_balance - a.initial_balance
+        net_deps = await get_account_net_deposits(db, a.id)
+        total_pnl = a.current_balance - a.initial_balance - net_deps
         total_trades = sum(len(b.trades) for b in a.bots)
         total_wins = sum(1 for b in a.bots for t in b.trades if t.pnl > 0)
         win_rate = (total_wins / total_trades * 100) if total_trades > 0 else 0.0
@@ -38,6 +39,9 @@ async def list_accounts(portfolio_id: int, db: AsyncSession = Depends(get_db)):
             exchange=a.exchange,
             initial_balance=a.initial_balance,
             current_balance=a.current_balance,
+            is_pinned=a.is_pinned,
+            pinned_stats=a.pinned_stats,
+            pinned_stat_values=a.pinned_stat_values,
             created_at=a.created_at,
             updated_at=a.updated_at,
             bot_count=len(a.bots),
@@ -89,7 +93,8 @@ async def get_account(account_id: int, db: AsyncSession = Depends(get_db)):
     if not account:
         raise HTTPException(status_code=404, detail="Account not found")
 
-    total_pnl = account.current_balance - account.initial_balance
+    net_deps = await get_account_net_deposits(db, account.id)
+    total_pnl = account.current_balance - account.initial_balance - net_deps
     total_trades = sum(len(b.trades) for b in account.bots)
     total_wins = sum(1 for b in account.bots for t in b.trades if t.pnl > 0)
     win_rate = (total_wins / total_trades * 100) if total_trades > 0 else 0.0
@@ -101,6 +106,9 @@ async def get_account(account_id: int, db: AsyncSession = Depends(get_db)):
         exchange=account.exchange,
         initial_balance=account.initial_balance,
         current_balance=account.current_balance,
+        is_pinned=account.is_pinned,
+        pinned_stats=account.pinned_stats,
+        pinned_stat_values=account.pinned_stat_values,
         created_at=account.created_at,
         updated_at=account.updated_at,
         bot_count=len(account.bots),
@@ -126,6 +134,8 @@ async def update_account(
         account.initial_balance = data.initial_balance
     if data.current_balance is not None:
         account.current_balance = data.current_balance
+    if data.is_pinned is not None:
+        account.is_pinned = data.is_pinned
 
     await db.commit()
     await db.refresh(account)
@@ -136,6 +146,9 @@ async def update_account(
         exchange=account.exchange,
         initial_balance=account.initial_balance,
         current_balance=account.current_balance,
+        is_pinned=account.is_pinned,
+        pinned_stats=account.pinned_stats,
+        pinned_stat_values=account.pinned_stat_values,
         created_at=account.created_at,
         updated_at=account.updated_at,
     )
