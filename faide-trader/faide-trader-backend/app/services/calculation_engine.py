@@ -280,8 +280,7 @@ async def recalculate_account(db: AsyncSession, account_id: int) -> dict:
                 select(Trade).where(Trade.bot_id == bot.id).order_by(Trade.entry_time)
             )
             bot_trades = list(trade_result.scalars().all())
-            bot_account = await db.get(Account, bot.account_id)
-            ib = bot_account.initial_balance if bot_account else 10000.0
+            ib = account.initial_balance
             bot_stats = calculate_stats_from_trades(bot_trades, ib)
         else:
             bot_stats = await recalculate_bot_from_trades(db, bot.id)
@@ -1038,8 +1037,7 @@ def _generate_constrained_trades(
         target_net_pnl = constraints["net_pnl"]
     elif "total_pnl" in constraints:
         # total_pnl is gross (before fees), net_pnl = total_pnl - total_fees
-        # We generate with fees, so target the net value
-        target_net_pnl = constraints["net_pnl"] if "net_pnl" in constraints else None
+        target_net_pnl = None
         if target_net_pnl is None:
             # Estimate fees for scaling purposes
             est_fees = num_trades * 2.0  # rough estimate

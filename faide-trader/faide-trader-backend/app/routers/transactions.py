@@ -14,6 +14,9 @@ router = APIRouter(prefix="/api", tags=["transactions"])
 
 @router.get("/accounts/{account_id}/transactions", response_model=list[TransactionResponse])
 async def list_transactions(account_id: int, db: AsyncSession = Depends(get_db)):
+    account = await db.get(Account, account_id)
+    if not account:
+        raise HTTPException(status_code=404, detail="Account not found")
     result = await db.execute(
         select(Transaction)
         .where(Transaction.account_id == account_id)
@@ -39,7 +42,7 @@ async def create_transaction(account_id: int, data: TransactionCreate, db: Async
         date=datetime.fromisoformat(data.date),
     )
     db.add(tx)
-    await db.commit()
+    await db.flush()
     await db.refresh(tx)
     await recalculate_account(db, account_id)
     await db.commit()
@@ -64,7 +67,7 @@ async def update_transaction(tx_id: int, data: TransactionUpdate, db: AsyncSessi
         tx.date = datetime.fromisoformat(data.date)
 
     account_id = tx.account_id
-    await db.commit()
+    await db.flush()
     await db.refresh(tx)
     await recalculate_account(db, account_id)
     await db.commit()
@@ -79,7 +82,7 @@ async def delete_transaction(tx_id: int, db: AsyncSession = Depends(get_db)):
 
     account_id = tx.account_id
     await db.delete(tx)
-    await db.commit()
+    await db.flush()
     await recalculate_account(db, account_id)
     await db.commit()
     return {"status": "deleted"}
