@@ -133,6 +133,9 @@ def generate_trades_for_bot(
         exit_time = trade_dt + timedelta(hours=duration_hours)
         if exit_time > END_DATE:
             exit_time = END_DATE - timedelta(hours=random.randint(1, 4))
+        # Ensure exit_time does NOT fall on a zero-activity day
+        while exit_time.date() in ZERO_DAYS:
+            exit_time -= timedelta(hours=random.randint(1, 6))
 
         trades.append({
             "symbol": symbol,
