@@ -733,6 +733,11 @@ async def handle_period_pnl_edit(
     When a period's P&L is edited, redistribute the change
     among trades within that period.
     """
+    # Check if this period is pinned
+    pinned_periods = await get_pinned_periods(db, bot_id, period_type)
+    if period_key in pinned_periods:
+        raise ValueError(f"Period '{period_key}' is pinned and cannot be edited")
+
     result = await db.execute(
         select(Trade).where(Trade.bot_id == bot_id).order_by(Trade.entry_time)
     )
@@ -778,6 +783,11 @@ async def handle_period_stat_edit(
     Edit a derived stat (win_rate, profit_factor, etc.) for a specific period.
     Back-calculates trades within that period to match the target stat.
     """
+    # Check if this period is pinned
+    pinned_periods = await get_pinned_periods(db, bot_id, period_type)
+    if period_key in pinned_periods:
+        raise ValueError(f"Period '{period_key}' is pinned and cannot be edited")
+
     result = await db.execute(
         select(Trade).where(Trade.bot_id == bot_id).order_by(Trade.entry_time)
     )
@@ -1058,6 +1068,9 @@ def _generate_constrained_trades(
                 shift = (target_new_pnl - current_total) / len(all_pnls)
                 win_pnls = [p + shift for p in win_pnls]
                 loss_pnls = [p + shift for p in loss_pnls]
+                # Clamp to preserve win/loss sign invariant
+                win_pnls = [max(p, 0.01) for p in win_pnls]
+                loss_pnls = [min(p, -0.01) for p in loss_pnls]
         elif all_pnls:
             per_trade = target_new_pnl / len(all_pnls)
             win_pnls = [abs(per_trade) if per_trade > 0 else per_trade for _ in win_pnls]

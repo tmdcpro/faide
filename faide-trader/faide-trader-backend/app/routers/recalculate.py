@@ -123,12 +123,22 @@ async def recalculate(data: RecalculateRequest, db: AsyncSession = Depends(get_d
         if not bot:
             raise HTTPException(status_code=404, detail="Bot not found")
 
+        # Reject recalculate on pinned stats — use setConstraint endpoint instead
+        if data.field in bot.pinned_stats and not (data.period_key and data.period_type):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Field '{data.field}' is locked. Use the constraint editor to update its value.",
+            )
+
         # Per-period stat editing (edit a stat for a specific time period)
         if data.period_key and data.period_type:
-            await handle_period_stat_edit(
-                db, bot.id, data.period_key, data.period_type,
-                data.field, data.new_value, data.pinned_fields,
-            )
+            try:
+                await handle_period_stat_edit(
+                    db, bot.id, data.period_key, data.period_type,
+                    data.field, data.new_value, data.pinned_fields,
+                )
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=str(e))
         else:
             # Global stat editing with constraint enforcement
             locked_stats = bot.pinned_stats

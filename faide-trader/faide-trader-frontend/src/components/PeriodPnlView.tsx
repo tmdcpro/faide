@@ -180,12 +180,18 @@ export function PeriodPnlView({ entityType, entityId, onRecalculated }: PeriodPn
                       {p.is_pinned && <Lock size={10} className="inline ml-1 text-yellow-400" />}
                     </td>
                     <td className="text-right py-2 px-2">
-                      <EditableField
-                        value={p.pnl}
-                        onSave={(v) => handlePeriodPnlEdit(p.period, v as number)}
-                        prefix="$"
-                        className={p.pnl >= 0 ? 'text-green-400' : 'text-red-400'}
-                      />
+                      {p.is_pinned ? (
+                        <span className={`font-mono ${p.pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                          ${formatNum(p.pnl)}
+                        </span>
+                      ) : (
+                        <EditableField
+                          value={p.pnl}
+                          onSave={(v) => handlePeriodPnlEdit(p.period, v as number)}
+                          prefix="$"
+                          className={p.pnl >= 0 ? 'text-green-400' : 'text-red-400'}
+                        />
+                      )}
                     </td>
                     <td className={`text-right py-2 px-2 font-mono ${p.cumulative_pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
                       ${formatNum(p.cumulative_pnl)}
@@ -197,7 +203,7 @@ export function PeriodPnlView({ entityType, entityId, onRecalculated }: PeriodPn
                       <span className="text-red-400">{p.loss_count}</span>
                     </td>
                     <td className="text-right py-2 px-2">
-                      {entityType === 'bot' ? (
+                      {entityType === 'bot' && !p.is_pinned ? (
                         <EditableField
                           value={p.win_rate}
                           onSave={(v) => handlePeriodStatEdit(p.period, 'win_rate', v as number)}
@@ -214,7 +220,7 @@ export function PeriodPnlView({ entityType, entityId, onRecalculated }: PeriodPn
                       ${formatNum(p.avg_pnl)}
                     </td>
                     <td className="text-right py-2 px-2">
-                      {entityType === 'bot' ? (
+                      {entityType === 'bot' && !p.is_pinned ? (
                         <EditableField
                           value={p.profit_factor}
                           onSave={(v) => handlePeriodStatEdit(p.period, 'profit_factor', v as number)}
