@@ -4,9 +4,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.database import get_db
-from app.models.portfolio import Portfolio, Account, Bot, Trade
+from app.models.portfolio import Portfolio, Account, Bot, Trade, Transaction
 from app.schemas import PortfolioCreate, PortfolioUpdate, PortfolioResponse
-from app.services.calculation_engine import recalculate_portfolio
+from app.services.calculation_engine import recalculate_portfolio, get_account_net_deposits
 
 router = APIRouter(prefix="/api/portfolios", tags=["portfolios"])
 
@@ -23,13 +23,16 @@ async def list_portfolios(db: AsyncSession = Depends(get_db)):
         total_pnl = 0.0
         total_balance = 0.0
         for a in p.accounts:
-            total_pnl += (a.current_balance - a.initial_balance)
+            net_deps = await get_account_net_deposits(db, a.id)
+            total_pnl += (a.current_balance - a.initial_balance - net_deps)
             total_balance += a.current_balance
 
         responses.append(PortfolioResponse(
             id=p.id,
             name=p.name,
             description=p.description,
+            pinned_stats=p.pinned_stats,
+            pinned_stat_values=p.pinned_stat_values,
             created_at=p.created_at,
             updated_at=p.updated_at,
             account_count=len(p.accounts),
@@ -49,6 +52,8 @@ async def create_portfolio(data: PortfolioCreate, db: AsyncSession = Depends(get
         id=portfolio.id,
         name=portfolio.name,
         description=portfolio.description,
+        pinned_stats=portfolio.pinned_stats,
+        pinned_stat_values=portfolio.pinned_stat_values,
         created_at=portfolio.created_at,
         updated_at=portfolio.updated_at,
     )
@@ -66,13 +71,16 @@ async def get_portfolio(portfolio_id: int, db: AsyncSession = Depends(get_db)):
     total_pnl = 0.0
     total_balance = 0.0
     for a in portfolio.accounts:
-        total_pnl += (a.current_balance - a.initial_balance)
+        net_deps = await get_account_net_deposits(db, a.id)
+        total_pnl += (a.current_balance - a.initial_balance - net_deps)
         total_balance += a.current_balance
 
     return PortfolioResponse(
         id=portfolio.id,
         name=portfolio.name,
         description=portfolio.description,
+        pinned_stats=portfolio.pinned_stats,
+        pinned_stat_values=portfolio.pinned_stat_values,
         created_at=portfolio.created_at,
         updated_at=portfolio.updated_at,
         account_count=len(portfolio.accounts),
@@ -100,6 +108,8 @@ async def update_portfolio(
         id=portfolio.id,
         name=portfolio.name,
         description=portfolio.description,
+        pinned_stats=portfolio.pinned_stats,
+        pinned_stat_values=portfolio.pinned_stat_values,
         created_at=portfolio.created_at,
         updated_at=portfolio.updated_at,
     )

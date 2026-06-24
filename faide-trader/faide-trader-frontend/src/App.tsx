@@ -8,7 +8,6 @@ import {
   type Stats,
   type PnlRecord,
 } from '@/lib/api';
-import { StatsCard } from '@/components/StatsCard';
 import { EditableStatsCard } from '@/components/EditableStatsCard';
 import { TradeTable } from '@/components/TradeTable';
 import { CreateDialog } from '@/components/CreateDialog';
@@ -19,7 +18,11 @@ import { EditableField } from '@/components/EditableField';
 import { MarketDataImportDialog } from '@/components/MarketDataImportDialog';
 import { GenerateTradesDialog } from '@/components/GenerateTradesDialog';
 import { CreateBotDialog } from '@/components/CreateBotDialog';
+import { EditBotDialog } from '@/components/EditBotDialog';
 import { SymbolPnlView } from '@/components/SymbolPnlView';
+import { TransactionsView } from '@/components/TransactionsView';
+import { EquityChart } from '@/components/EquityChart';
+import { exportPortfolioReport } from '@/lib/exportReport';
 import {
   ChevronRight,
   Plus,
@@ -32,6 +35,9 @@ import {
   RefreshCw,
   Download,
   Zap,
+  Lock,
+  Unlock,
+  Pencil,
 } from 'lucide-react';
 
 type View =
@@ -52,6 +58,9 @@ function App() {
   const [showCreate, setShowCreate] = useState<string | null>(null);
   const [showMarketImport, setShowMarketImport] = useState(false);
   const [showGenerateTrades, setShowGenerateTrades] = useState(false);
+  const [showRegenerate, setShowRegenerate] = useState<false | 'bot' | 'account' | 'portfolio'>(false);
+  const [showEdit, setShowEdit] = useState<null | 'portfolio' | 'account' | 'bot'>(null);
+  const [regenerating, setRegenerating] = useState(false);
   const [currentPortfolio, setCurrentPortfolio] = useState<Portfolio | null>(null);
   const [currentAccount, setCurrentAccount] = useState<Account | null>(null);
   const [currentBot, setCurrentBot] = useState<Bot | null>(null);
@@ -238,10 +247,37 @@ function App() {
             <h1 className="text-2xl font-bold">{currentPortfolio?.name}</h1>
             <p className="text-sm text-gray-400">{currentPortfolio?.description}</p>
           </div>
+          <button
+            onClick={() => setShowEdit('portfolio')}
+            className="p-2 hover:bg-slate-700 rounded-lg transition-colors text-gray-400 hover:text-white"
+            title="Edit portfolio"
+          >
+            <Pencil size={16} />
+          </button>
         </div>
         <div className="flex items-center gap-2">
           <button onClick={loadData} className="p-2 hover:bg-slate-700 rounded-lg transition-colors" title="Refresh">
             <RefreshCw size={16} />
+          </button>
+          <button
+            onClick={async () => {
+              try {
+                await exportPortfolioReport(view.portfolioId);
+              } catch (e) {
+                alert('Export failed: ' + (e instanceof Error ? e.message : 'Unknown error'));
+              }
+            }}
+            className="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 rounded-lg text-sm font-medium transition-colors"
+            title="Export read-only HTML report"
+          >
+            <Download size={16} /> Export Report
+          </button>
+          <button
+            onClick={() => setShowRegenerate('portfolio')}
+            className="flex items-center gap-2 px-4 py-2 bg-purple-600 hover:bg-purple-500 rounded-lg text-sm font-medium transition-colors"
+            title="Regenerate all bot trades across all accounts while respecting locked values"
+          >
+            <RefreshCw size={16} /> Regenerate
           </button>
           <button
             onClick={() => setShowCreate('account')}
@@ -265,11 +301,28 @@ function App() {
 
       {stats && stats.total_trades > 0 && (
         <>
-          <StatsCard stats={stats} title="Portfolio Statistics" />
+          <EditableStatsCard
+            stats={stats}
+            title="Portfolio Statistics"
+            entityType="portfolio"
+            entityId={view.portfolioId}
+            pinnedStats={currentPortfolio?.pinned_stats || []}
+            pinnedStatValues={currentPortfolio?.pinned_stat_values || {}}
+            onRecalculated={loadData}
+          />
+          <div className="mt-4">
+            <EquityChart entityType="portfolio" entityId={view.portfolioId} />
+          </div>
           <div className="mt-4">
             <PeriodPnlView entityType="portfolio" entityId={view.portfolioId} onRecalculated={loadData} />
           </div>
         </>
+      )}
+
+      {view.type === 'portfolio' && (
+        <div className="mt-4">
+          <TransactionsView portfolioId={view.portfolioId} />
+        </div>
       )}
 
       <div className="mt-6">
@@ -293,7 +346,10 @@ function App() {
                       <Wallet size={20} className="text-blue-400" />
                     </div>
                     <div>
-                      <h3 className="font-medium">{a.name}</h3>
+                      <h3 className="font-medium">
+                        {a.name}
+                        {a.is_pinned && <Lock size={12} className="inline ml-1 text-yellow-400" />}
+                      </h3>
                       <p className="text-xs text-gray-400">
                         {a.exchange.replace('_', ' ').toUpperCase()} | {a.bot_count} bot{a.bot_count !== 1 ? 's' : ''} | {a.total_trades} trades
                       </p>
@@ -359,6 +415,126 @@ function App() {
           onClose={() => setShowCreate(null)}
         />
       )}
+
+      {showEdit === 'portfolio' && currentPortfolio && (
+        <CreateDialog
+          title="Edit Portfolio"
+          submitLabel="Save"
+          fields={[
+            { name: 'name', label: 'Portfolio Name', type: 'text', required: true, defaultValue: currentPortfolio.name },
+            { name: 'description', label: 'Description', type: 'text', defaultValue: currentPortfolio.description },
+          ]}
+          onSubmit={async (data) => {
+            await api.updatePortfolio(currentPortfolio.id, {
+              name: data.name as string,
+              description: data.description as string,
+            });
+            loadData();
+          }}
+          onClose={() => setShowEdit(null)}
+        />
+      )}
+
+      {showRegenerate === 'portfolio' && currentPortfolio && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-slate-800 rounded-lg border border-slate-700 p-6 w-full max-w-md">
+            <h2 className="text-lg font-bold mb-4">Regenerate Portfolio Stats</h2>
+            <p className="text-sm text-gray-400 mb-4">
+              This will regenerate trades for all unfrozen bots across all unfrozen accounts.
+              {(currentPortfolio.pinned_stats?.length ?? 0) > 0 ? (
+                <span> Portfolio-level locked values will be distributed as constraints across accounts and bots.</span>
+              ) : (
+                <span> No portfolio-level stats are locked. Account and bot-level locks will still be respected.</span>
+              )}
+            </p>
+
+            {(currentPortfolio.pinned_stats?.length ?? 0) > 0 && stats && (
+              <div className="bg-slate-700/50 rounded-lg p-3 mb-4">
+                <p className="text-xs text-yellow-400 font-medium mb-2 flex items-center gap-1">
+                  <Lock size={12} /> Portfolio constraints:
+                </p>
+                <div className="space-y-1">
+                  {currentPortfolio.pinned_stats.map((field: string) => {
+                    const computedValue = (stats as unknown as Record<string, number>)[field];
+                    const constraintVal = currentPortfolio.pinned_stat_values?.[field];
+                    const displayValue = constraintVal ?? computedValue;
+                    const label = field.replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase());
+                    return (
+                      <div key={field} className="flex justify-between text-sm">
+                        <span className="text-gray-300">{label}</span>
+                        <span className="text-yellow-400 font-mono">
+                          {typeof displayValue === 'number' ? displayValue.toLocaleString(undefined, { maximumFractionDigits: 4 }) : 'N/A'}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {accounts.some(a => (a.pinned_stats?.length ?? 0) > 0) && (
+              <div className="bg-slate-700/50 rounded-lg p-3 mb-4">
+                <p className="text-xs text-blue-400 font-medium mb-2 flex items-center gap-1">
+                  <Lock size={12} /> Account-level constraints:
+                </p>
+                <div className="space-y-1">
+                  {accounts.filter(a => (a.pinned_stats?.length ?? 0) > 0).map(a => (
+                    <div key={a.id} className="text-sm text-gray-300">
+                      <span className="font-medium">{a.name}:</span>{' '}
+                      {a.pinned_stats.map((f: string) => f.replace(/_/g, ' ')).join(', ')}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {accounts.some(a => a.is_pinned) && (
+              <div className="bg-slate-700/50 rounded-lg p-3 mb-4">
+                <p className="text-xs text-gray-400 font-medium mb-2">
+                  Frozen accounts (will be skipped): {accounts.filter(a => a.is_pinned).map(a => a.name).join(', ')}
+                </p>
+              </div>
+            )}
+
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={() => setShowRegenerate(false)}
+                className="px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg text-sm transition-colors"
+                disabled={regenerating}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={async () => {
+                  setRegenerating(true);
+                  try {
+                    await api.regeneratePortfolio(currentPortfolio.id);
+                    loadData();
+                  } catch (e) {
+                    console.error('Portfolio regeneration failed:', e);
+                    alert(`Regeneration failed: ${e instanceof Error ? e.message : 'Unknown error'}`);
+                  } finally {
+                    setRegenerating(false);
+                    setShowRegenerate(false);
+                  }
+                }}
+                disabled={regenerating}
+                className="flex items-center gap-2 px-4 py-2 bg-purple-600 hover:bg-purple-500 disabled:bg-purple-800 disabled:text-gray-400 rounded-lg text-sm font-medium transition-colors"
+              >
+                {regenerating ? (
+                  <>
+                    <RefreshCw size={14} className="animate-spin" /> Regenerating...
+                  </>
+                ) : (
+                  <>
+                    <RefreshCw size={14} /> Regenerate
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
     );
   };
@@ -378,12 +554,51 @@ function App() {
               <p className="text-xs text-gray-400">
                 {currentAccount?.exchange.replace('_', ' ').toUpperCase()} | Initial: $
                 {currentAccount?.initial_balance.toLocaleString()}
+                {currentAccount?.is_pinned && (
+                  <span className="text-yellow-400 ml-1">
+                    <Lock size={12} className="inline" /> Frozen
+                  </span>
+                )}
               </p>
             </div>
+            <button
+              onClick={() => setShowEdit('account')}
+              className="p-2 hover:bg-slate-700 rounded-lg transition-colors text-gray-400 hover:text-white"
+              title="Edit account"
+            >
+              <Pencil size={16} />
+            </button>
           </div>
           <div className="flex items-center gap-2">
+            <button
+              onClick={async () => {
+                if (!currentAccount) return;
+                await api.togglePin({
+                  entity_type: 'account',
+                  entity_id: currentAccount.id,
+                  pinned: !currentAccount.is_pinned,
+                });
+                loadData();
+              }}
+              className={`flex items-center gap-1 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+                currentAccount?.is_pinned
+                  ? 'bg-yellow-600/20 text-yellow-400 hover:bg-yellow-600/30'
+                  : 'bg-slate-700 text-gray-400 hover:bg-slate-600'
+              }`}
+              title={currentAccount?.is_pinned ? 'Unfreeze account — portfolio edits will affect this account' : 'Freeze account — protect from portfolio recalculation'}
+            >
+              {currentAccount?.is_pinned ? <Lock size={14} /> : <Unlock size={14} />}
+              {currentAccount?.is_pinned ? 'Frozen' : 'Freeze'}
+            </button>
             <button onClick={loadData} className="p-2 hover:bg-slate-700 rounded-lg transition-colors">
               <RefreshCw size={16} />
+            </button>
+            <button
+              onClick={() => setShowRegenerate('account')}
+              className="flex items-center gap-2 px-4 py-2 bg-purple-600 hover:bg-purple-500 rounded-lg text-sm font-medium transition-colors"
+              title="Regenerate all bot trades in this account while respecting locked values"
+            >
+              <RefreshCw size={16} /> Regenerate
             </button>
             <button
               onClick={() => setShowCreate('bot')}
@@ -407,12 +622,27 @@ function App() {
 
         {stats && stats.total_trades > 0 && (
           <>
-            <StatsCard stats={stats} title="Account Statistics" />
+            <EditableStatsCard
+              stats={stats}
+              title="Account Statistics"
+              entityType="account"
+              entityId={view.accountId}
+              pinnedStats={currentAccount?.pinned_stats || []}
+              pinnedStatValues={currentAccount?.pinned_stat_values || {}}
+              onRecalculated={loadData}
+            />
+            <div className="mt-4">
+              <EquityChart entityType="account" entityId={view.accountId} />
+            </div>
             <div className="mt-4">
               <PeriodPnlView entityType="account" entityId={view.accountId} onRecalculated={loadData} />
             </div>
           </>
         )}
+
+        <div className="mt-4">
+          <TransactionsView accountId={view.accountId} onChanged={loadData} />
+        </div>
 
         <div className="mt-6">
           <h2 className="text-lg font-semibold mb-4">Bots / Strategies</h2>
@@ -442,7 +672,10 @@ function App() {
                         <BotIcon size={20} className={b.is_active ? 'text-green-400' : 'text-gray-400'} />
                       </div>
                       <div>
-                        <h3 className="font-medium">{b.name}</h3>
+                        <h3 className="font-medium">
+                          {b.name}
+                          {b.is_pinned && <Lock size={12} className="inline ml-1 text-yellow-400" />}
+                        </h3>
                         <p className="text-xs text-gray-400">
                           {b.strategy_type} | {b.symbols && b.symbols.length > 1 ? `${b.symbols.length} symbols` : b.symbol} | {b.total_trades} trades
                         </p>
@@ -491,6 +724,136 @@ function App() {
             onClose={() => setShowCreate(null)}
           />
         )}
+
+        {showEdit === 'account' && currentAccount && (
+          <CreateDialog
+            title="Edit Account"
+            submitLabel="Save"
+            fields={[
+              { name: 'name', label: 'Account Name', type: 'text', required: true, defaultValue: currentAccount.name },
+              {
+                name: 'exchange', label: 'Exchange', type: 'select',
+                options: [
+                  { value: 'bitget_futures', label: 'Bitget Futures' },
+                  { value: 'phemex_futures', label: 'Phemex Futures' },
+                  { value: 'kraken', label: 'Kraken' },
+                ],
+                defaultValue: currentAccount.exchange,
+              },
+              { name: 'initial_balance', label: 'Initial Balance ($)', type: 'number', defaultValue: currentAccount.initial_balance },
+            ]}
+            onSubmit={async (data) => {
+              await api.updateAccount(currentAccount.id, {
+                name: data.name as string,
+                exchange: data.exchange as string,
+                initial_balance: data.initial_balance as number,
+              });
+              loadData();
+            }}
+            onClose={() => setShowEdit(null)}
+          />
+        )}
+
+        {showRegenerate === 'account' && currentAccount && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+            <div className="bg-slate-800 rounded-lg border border-slate-700 p-6 w-full max-w-md">
+              <h2 className="text-lg font-bold mb-4">Regenerate Account Stats</h2>
+              <p className="text-sm text-gray-400 mb-4">
+                This will regenerate trades for all unfrozen bots in this account.
+                {(currentAccount.pinned_stats?.length ?? 0) > 0 ? (
+                  <span> Account-level locked values will be respected as constraints.</span>
+                ) : (
+                  <span> No account-level stats are locked. Bot-level locks will still be respected.</span>
+                )}
+              </p>
+
+              {(currentAccount.pinned_stats?.length ?? 0) > 0 && stats && (
+                <div className="bg-slate-700/50 rounded-lg p-3 mb-4">
+                  <p className="text-xs text-yellow-400 font-medium mb-2 flex items-center gap-1">
+                    <Lock size={12} /> Account constraints:
+                  </p>
+                  <div className="space-y-1">
+                    {currentAccount.pinned_stats.map((field: string) => {
+                      const computedValue = (stats as unknown as Record<string, number>)[field];
+                      const constraintVal = currentAccount.pinned_stat_values?.[field];
+                      const displayValue = constraintVal ?? computedValue;
+                      const label = field.replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase());
+                      return (
+                        <div key={field} className="flex justify-between text-sm">
+                          <span className="text-gray-300">{label}</span>
+                          <span className="text-yellow-400 font-mono">
+                            {typeof displayValue === 'number' ? displayValue.toLocaleString(undefined, { maximumFractionDigits: 4 }) : 'N/A'}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {bots.some(b => (b.pinned_stats?.length ?? 0) > 0) && (
+                <div className="bg-slate-700/50 rounded-lg p-3 mb-4">
+                  <p className="text-xs text-blue-400 font-medium mb-2 flex items-center gap-1">
+                    <Lock size={12} /> Bot-level constraints:
+                  </p>
+                  <div className="space-y-1">
+                    {bots.filter(b => (b.pinned_stats?.length ?? 0) > 0).map(b => (
+                      <div key={b.id} className="text-sm text-gray-300">
+                        <span className="font-medium">{b.name}:</span>{' '}
+                        {b.pinned_stats.map(f => f.replace(/_/g, ' ')).join(', ')}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {bots.some(b => b.is_pinned) && (
+                <div className="bg-slate-700/50 rounded-lg p-3 mb-4">
+                  <p className="text-xs text-gray-400 font-medium mb-2">
+                    Frozen bots (will be skipped): {bots.filter(b => b.is_pinned).map(b => b.name).join(', ')}
+                  </p>
+                </div>
+              )}
+
+              <div className="flex justify-end gap-3">
+                <button
+                  onClick={() => setShowRegenerate(false)}
+                  className="px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg text-sm transition-colors"
+                  disabled={regenerating}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={async () => {
+                    setRegenerating(true);
+                    try {
+                      await api.regenerateAccount(currentAccount.id);
+                      loadData();
+                    } catch (e) {
+                      console.error('Account regeneration failed:', e);
+                      alert(`Regeneration failed: ${e instanceof Error ? e.message : 'Unknown error'}`);
+                    } finally {
+                      setRegenerating(false);
+                      setShowRegenerate(false);
+                    }
+                  }}
+                  disabled={regenerating}
+                  className="flex items-center gap-2 px-4 py-2 bg-purple-600 hover:bg-purple-500 disabled:bg-purple-800 disabled:text-gray-400 rounded-lg text-sm font-medium transition-colors"
+                >
+                  {regenerating ? (
+                    <>
+                      <RefreshCw size={14} className="animate-spin" /> Regenerating...
+                    </>
+                  ) : (
+                    <>
+                      <RefreshCw size={14} /> Regenerate
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     );
   };
@@ -512,12 +875,51 @@ function App() {
                 <span className={currentBot?.is_active ? 'text-green-400' : 'text-gray-400'}>
                   {currentBot?.is_active ? 'Active' : 'Inactive'}
                 </span>
+                {currentBot?.is_pinned && (
+                  <span className="text-yellow-400 ml-1">
+                    <Lock size={12} className="inline" /> Frozen
+                  </span>
+                )}
               </p>
             </div>
+            <button
+              onClick={() => setShowEdit('bot')}
+              className="p-2 hover:bg-slate-700 rounded-lg transition-colors text-gray-400 hover:text-white"
+              title="Edit bot"
+            >
+              <Pencil size={16} />
+            </button>
           </div>
           <div className="flex items-center gap-2">
+            <button
+              onClick={async () => {
+                if (!currentBot) return;
+                await api.togglePin({
+                  entity_type: 'bot',
+                  entity_id: currentBot.id,
+                  pinned: !currentBot.is_pinned,
+                });
+                loadData();
+              }}
+              className={`flex items-center gap-1 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+                currentBot?.is_pinned
+                  ? 'bg-yellow-600/20 text-yellow-400 hover:bg-yellow-600/30'
+                  : 'bg-slate-700 text-gray-400 hover:bg-slate-600'
+              }`}
+              title={currentBot?.is_pinned ? 'Unfreeze bot — parent account edits will affect this bot' : 'Freeze bot — protect from parent account recalculation'}
+            >
+              {currentBot?.is_pinned ? <Lock size={14} /> : <Unlock size={14} />}
+              {currentBot?.is_pinned ? 'Frozen' : 'Freeze'}
+            </button>
             <button onClick={loadData} className="p-2 hover:bg-slate-700 rounded-lg transition-colors">
               <RefreshCw size={16} />
+            </button>
+            <button
+              onClick={() => setShowRegenerate('bot')}
+              className="flex items-center gap-2 px-4 py-2 bg-purple-600 hover:bg-purple-500 rounded-lg text-sm font-medium transition-colors"
+              title="Regenerate trades while keeping locked stat values fixed"
+            >
+              <RefreshCw size={16} /> Regenerate
             </button>
             <button
               onClick={() => setShowGenerateTrades(true)}
@@ -553,6 +955,8 @@ function App() {
               title="Bot Statistics"
               entityType="bot"
               entityId={view.botId}
+              pinnedStats={currentBot?.pinned_stats || []}
+              pinnedStatValues={currentBot?.pinned_stat_values || {}}
               onRecalculated={loadData}
             />
           </div>
@@ -606,6 +1010,107 @@ function App() {
             onClose={() => setShowGenerateTrades(false)}
             onGenerated={loadData}
           />
+        )}
+
+        {showEdit === 'bot' && currentBot && (
+          <EditBotDialog
+            bot={{
+              name: currentBot.name,
+              strategy_type: currentBot.strategy_type,
+              symbol: currentBot.symbol,
+              symbols: currentBot.symbols,
+              is_active: currentBot.is_active,
+            }}
+            accountExchange={currentAccount?.exchange || 'bitget_futures'}
+            onSubmit={async (data) => {
+              await api.updateBot(currentBot.id, {
+                name: data.name,
+                strategy_type: data.strategy_type,
+                symbol: data.symbol,
+                symbols: data.symbols,
+                is_active: data.is_active,
+              });
+              loadData();
+            }}
+            onClose={() => setShowEdit(null)}
+          />
+        )}
+
+        {showRegenerate === 'bot' && currentBot && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+            <div className="bg-slate-800 rounded-lg border border-slate-700 p-6 w-full max-w-md">
+              <h2 className="text-lg font-bold mb-4">Regenerate Stats</h2>
+              <p className="text-sm text-gray-400 mb-4">
+                This will delete all unpinned trades and generate new ones.
+                {currentBot.pinned_stats.length > 0 ? (
+                  <span> Locked values will be preserved as constraints.</span>
+                ) : (
+                  <span> No stats are currently locked — all values will be regenerated freely. Lock stats first to preserve specific values.</span>
+                )}
+              </p>
+
+              {currentBot.pinned_stats.length > 0 && stats && (
+                <div className="bg-slate-700/50 rounded-lg p-3 mb-4">
+                  <p className="text-xs text-yellow-400 font-medium mb-2 flex items-center gap-1">
+                    <Lock size={12} /> Values that will be preserved:
+                  </p>
+                  <div className="space-y-1">
+                    {currentBot.pinned_stats.map((field) => {
+                      const computedValue = (stats as unknown as Record<string, number>)[field];
+                      const constraintVal = currentBot.pinned_stat_values?.[field];
+                      const displayValue = constraintVal ?? computedValue;
+                      const label = field.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+                      return (
+                        <div key={field} className="flex justify-between text-sm">
+                          <span className="text-gray-300">{label}</span>
+                          <span className="text-yellow-400 font-mono">
+                            {typeof displayValue === 'number' ? displayValue.toLocaleString(undefined, { maximumFractionDigits: 4 }) : 'N/A'}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              <div className="flex justify-end gap-3">
+                <button
+                  onClick={() => setShowRegenerate(false)}
+                  className="px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg text-sm transition-colors"
+                  disabled={regenerating}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={async () => {
+                    setRegenerating(true);
+                    try {
+                      await api.regenerateBot(currentBot.id);
+                      loadData();
+                    } catch (e) {
+                      console.error('Regeneration failed:', e);
+                      alert(`Regeneration failed: ${e instanceof Error ? e.message : 'Unknown error'}`);
+                    } finally {
+                      setRegenerating(false);
+                      setShowRegenerate(false);
+                    }
+                  }}
+                  disabled={regenerating}
+                  className="flex items-center gap-2 px-4 py-2 bg-purple-600 hover:bg-purple-500 disabled:bg-purple-800 disabled:text-gray-400 rounded-lg text-sm font-medium transition-colors"
+                >
+                  {regenerating ? (
+                    <>
+                      <RefreshCw size={14} className="animate-spin" /> Regenerating...
+                    </>
+                  ) : (
+                    <>
+                      <RefreshCw size={14} /> Regenerate
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
         )}
       </div>
     );

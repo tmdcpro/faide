@@ -29,10 +29,44 @@ class Portfolio(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     name = Column(String, nullable=False)
     description = Column(String, default="")
+    _pinned_stats = Column("pinned_stats", String, default="[]")
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     accounts = relationship("Account", back_populates="portfolio", cascade="all, delete-orphan")
+
+    @property
+    def pinned_stats(self) -> list[str]:
+        try:
+            data = json.loads(self._pinned_stats) if self._pinned_stats else []
+            if isinstance(data, dict):
+                return list(data.keys())
+            return data
+        except (json.JSONDecodeError, TypeError):
+            return []
+
+    @pinned_stats.setter
+    def pinned_stats(self, value: list[str]) -> None:
+        # Preserve existing constraint values when updating the field list
+        existing = self.pinned_stat_values
+        new_dict = {}
+        for field in (value if value else []):
+            new_dict[field] = existing.get(field)
+        self._pinned_stats = json.dumps(new_dict)
+
+    @property
+    def pinned_stat_values(self) -> dict[str, float | None]:
+        try:
+            data = json.loads(self._pinned_stats) if self._pinned_stats else {}
+            if isinstance(data, list):
+                return {f: None for f in data}
+            return data
+        except (json.JSONDecodeError, TypeError):
+            return {}
+
+    @pinned_stat_values.setter
+    def pinned_stat_values(self, value: dict[str, float | None]) -> None:
+        self._pinned_stats = json.dumps(value if value else {})
 
 
 class Account(Base):
@@ -44,11 +78,46 @@ class Account(Base):
     exchange = Column(String, nullable=False)
     initial_balance = Column(Float, default=10000.0)
     current_balance = Column(Float, default=10000.0)
+    is_pinned = Column(Boolean, default=False)
+    _pinned_stats = Column("pinned_stats", String, default="[]")
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     portfolio = relationship("Portfolio", back_populates="accounts")
     bots = relationship("Bot", back_populates="account", cascade="all, delete-orphan")
+    transactions = relationship("Transaction", back_populates="account", cascade="all, delete-orphan")
+
+    @property
+    def pinned_stats(self) -> list[str]:
+        try:
+            data = json.loads(self._pinned_stats) if self._pinned_stats else []
+            if isinstance(data, dict):
+                return list(data.keys())
+            return data
+        except (json.JSONDecodeError, TypeError):
+            return []
+
+    @pinned_stats.setter
+    def pinned_stats(self, value: list[str]) -> None:
+        existing = self.pinned_stat_values
+        new_dict = {}
+        for field in (value if value else []):
+            new_dict[field] = existing.get(field)
+        self._pinned_stats = json.dumps(new_dict)
+
+    @property
+    def pinned_stat_values(self) -> dict[str, float | None]:
+        try:
+            data = json.loads(self._pinned_stats) if self._pinned_stats else {}
+            if isinstance(data, list):
+                return {f: None for f in data}
+            return data
+        except (json.JSONDecodeError, TypeError):
+            return {}
+
+    @pinned_stat_values.setter
+    def pinned_stat_values(self, value: dict[str, float | None]) -> None:
+        self._pinned_stats = json.dumps(value if value else {})
 
 
 class Bot(Base):
@@ -61,12 +130,48 @@ class Bot(Base):
     symbol = Column(String, default="BTC/USDT")
     _symbols = Column("symbols", String, default="[]")  # JSON-encoded list of symbols
     is_active = Column(Boolean, default=True)
+    is_pinned = Column(Boolean, default=False)
+    _pinned_stats = Column("pinned_stats", String, default="[]")  # JSON-encoded list of pinned stat field names
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     account = relationship("Account", back_populates="bots")
     trades = relationship("Trade", back_populates="bot", cascade="all, delete-orphan")
     pnl_records = relationship("PnlRecord", back_populates="bot", cascade="all, delete-orphan")
+
+    @property
+    def pinned_stats(self) -> list[str]:
+        """Get the list of stat fields that are pinned/locked."""
+        try:
+            data = json.loads(self._pinned_stats) if self._pinned_stats else []
+            if isinstance(data, dict):
+                return list(data.keys())
+            return data
+        except (json.JSONDecodeError, TypeError):
+            return []
+
+    @pinned_stats.setter
+    def pinned_stats(self, value: list[str]) -> None:
+        """Set the list of pinned stat field names."""
+        existing = self.pinned_stat_values
+        new_dict = {}
+        for field in (value if value else []):
+            new_dict[field] = existing.get(field)
+        self._pinned_stats = json.dumps(new_dict)
+
+    @property
+    def pinned_stat_values(self) -> dict[str, float | None]:
+        try:
+            data = json.loads(self._pinned_stats) if self._pinned_stats else {}
+            if isinstance(data, list):
+                return {f: None for f in data}
+            return data
+        except (json.JSONDecodeError, TypeError):
+            return {}
+
+    @pinned_stat_values.setter
+    def pinned_stat_values(self, value: dict[str, float | None]) -> None:
+        self._pinned_stats = json.dumps(value if value else {})
 
     @property
     def symbols(self) -> list[str]:
@@ -133,6 +238,21 @@ class PnlRecord(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     bot = relationship("Bot", back_populates="pnl_records")
+
+
+class Transaction(Base):
+    __tablename__ = "transactions"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    account_id = Column(Integer, ForeignKey("accounts.id"), nullable=False)
+    type = Column(String, nullable=False)  # "deposit" or "withdrawal"
+    amount = Column(Float, nullable=False)
+    note = Column(String, default="")
+    date = Column(DateTime, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    account = relationship("Account", back_populates="transactions")
 
 
 class MarketData(Base):

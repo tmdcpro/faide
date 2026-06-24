@@ -15,9 +15,10 @@ interface CreateDialogProps {
   fields: Field[];
   onSubmit: (data: Record<string, string | number>) => Promise<void>;
   onClose: () => void;
+  submitLabel?: string;
 }
 
-export function CreateDialog({ title, fields, onSubmit, onClose }: CreateDialogProps) {
+export function CreateDialog({ title, fields, onSubmit, onClose, submitLabel }: CreateDialogProps) {
   const [values, setValues] = useState<Record<string, string | number>>(() => {
     const initial: Record<string, string | number> = {};
     fields.forEach((f) => {
@@ -106,7 +107,7 @@ export function CreateDialog({ title, fields, onSubmit, onClose }: CreateDialogP
               disabled={submitting}
               className="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded text-sm font-medium transition-colors disabled:opacity-50"
             >
-              {submitting ? 'Creating...' : 'Create'}
+              {submitting ? 'Saving...' : (submitLabel || 'Create')}
             </button>
           </div>
         </form>
