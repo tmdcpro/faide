@@ -145,16 +145,18 @@ export function RangeRegenerateDialog({
               </label>
             </div>
 
-            <label className="flex items-center gap-2 text-sm text-gray-300 mb-3">
-              <input
-                type="checkbox"
-                checked={withTransactions}
-                onChange={(e) => setWithTransactions(e.target.checked)}
-              />
-              Also regenerate deposits/withdrawals inside the period
-            </label>
+            {entityType !== 'bot' && (
+              <label className="flex items-center gap-2 text-sm text-gray-300 mb-3">
+                <input
+                  type="checkbox"
+                  checked={withTransactions}
+                  onChange={(e) => setWithTransactions(e.target.checked)}
+                />
+                Also regenerate deposits/withdrawals inside the period
+              </label>
+            )}
 
-            {withTransactions && (
+            {entityType !== 'bot' && withTransactions && (
               <div className="grid grid-cols-3 gap-3 mb-4">
                 <label className="text-xs text-gray-400">
                   Deposits total ($)

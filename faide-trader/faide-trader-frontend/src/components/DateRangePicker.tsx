@@ -15,7 +15,12 @@ const PRESETS: { label: string; days: number }[] = [
 ];
 
 function toInput(value?: string): string {
-  return value ? value.slice(0, 16) : '';
+  if (!value) return '';
+  return value.length <= 10 ? `${value}T00:00` : value.slice(0, 16);
+}
+
+function toLocalDate(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
 function formatDisplay(value: string): string {
@@ -45,10 +50,7 @@ export function DateRangePicker({ value, onChange }: DateRangePickerProps) {
   const applyPreset = (days: number) => {
     const end = new Date();
     const start = new Date(end.getTime() - (days - 1) * 24 * 60 * 60 * 1000);
-    onChange({
-      start: start.toISOString().slice(0, 10),
-      end: end.toISOString().slice(0, 10),
-    });
+    onChange({ start: toLocalDate(start), end: toLocalDate(end) });
   };
 
   return (

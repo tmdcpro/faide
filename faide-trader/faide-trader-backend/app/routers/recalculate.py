@@ -1633,6 +1633,14 @@ async def regenerate_bot_range(
     bot = await db.get(Bot, bot_id)
     if not bot:
         raise HTTPException(status_code=404, detail="Bot not found")
+    account = await db.get(Account, bot.account_id)
+    if account and account.is_pinned:
+        raise HTTPException(status_code=400, detail="Account is frozen")
+    if data.regenerate_transactions:
+        raise HTTPException(
+            status_code=400,
+            detail="Transactions are account-level; regenerate them from the account or portfolio",
+        )
     return await _run_range_regeneration(db, [bot], data)
 
 

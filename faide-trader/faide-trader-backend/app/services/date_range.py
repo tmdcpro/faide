@@ -30,7 +30,7 @@ def parse_range(
             end = datetime.fromisoformat(end_date)
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid end_date format")
-        if end.time() == time.min and len(end_date) <= 10:
+        if end.time() == time.min:
             end = end + timedelta(days=1) - timedelta(microseconds=1)
 
     if start and end and start > end:
