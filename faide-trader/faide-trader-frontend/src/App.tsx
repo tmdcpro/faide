@@ -65,14 +65,25 @@ function App() {
   const [showRegenerate, setShowRegenerate] = useState<false | 'bot' | 'account' | 'portfolio'>(false);
   const [showRangeRegenerate, setShowRangeRegenerate] = useState<false | 'bot' | 'account' | 'portfolio'>(false);
   const [range, setRange] = useState<DateRange>({});
+  const [refreshKey, setRefreshKey] = useState(0);
   const [showEdit, setShowEdit] = useState<null | 'portfolio' | 'account' | 'bot'>(null);
   const [regenerating, setRegenerating] = useState(false);
   const [currentPortfolio, setCurrentPortfolio] = useState<Portfolio | null>(null);
   const [currentAccount, setCurrentAccount] = useState<Account | null>(null);
   const [currentBot, setCurrentBot] = useState<Bot | null>(null);
 
+  const rangeInvalid = Boolean(
+    range.start && range.end && new Date(range.start) > new Date(range.end)
+  );
+
   // Load data based on current view
   const loadData = useCallback(async () => {
+    if (rangeInvalid) {
+      setStats(null);
+      setTrades([]);
+      setPnlRecords([]);
+      return;
+    }
     setLoading(true);
     try {
       if (view.type === 'portfolios') {
@@ -117,7 +128,7 @@ function App() {
     } finally {
       setLoading(false);
     }
-  }, [view, range]);
+  }, [view, range, rangeInvalid]);
 
   useEffect(() => {
     loadData();
@@ -324,17 +335,17 @@ function App() {
             onRecalculated={loadData}
           />
           <div className="mt-4">
-            <EquityChart entityType="portfolio" entityId={view.portfolioId} range={range} />
+            <EquityChart key={refreshKey} entityType="portfolio" entityId={view.portfolioId} range={range} />
           </div>
           <div className="mt-4">
-            <PeriodPnlView entityType="portfolio" entityId={view.portfolioId} range={range} onRecalculated={loadData} />
+            <PeriodPnlView key={refreshKey} entityType="portfolio" entityId={view.portfolioId} range={range} onRecalculated={loadData} />
           </div>
         </>
       )}
 
       {view.type === 'portfolio' && (
         <div className="mt-4">
-          <TransactionsView portfolioId={view.portfolioId} range={range} />
+          <TransactionsView key={refreshKey} portfolioId={view.portfolioId} range={range} />
         </div>
       )}
 
@@ -652,16 +663,16 @@ function App() {
               onRecalculated={loadData}
             />
             <div className="mt-4">
-              <EquityChart entityType="account" entityId={view.accountId} range={range} />
+              <EquityChart key={refreshKey} entityType="account" entityId={view.accountId} range={range} />
             </div>
             <div className="mt-4">
-              <PeriodPnlView entityType="account" entityId={view.accountId} range={range} onRecalculated={loadData} />
+              <PeriodPnlView key={refreshKey} entityType="account" entityId={view.accountId} range={range} onRecalculated={loadData} />
             </div>
           </>
         )}
 
         <div className="mt-4">
-          <TransactionsView accountId={view.accountId} range={range} onChanged={loadData} />
+          <TransactionsView key={refreshKey} accountId={view.accountId} range={range} onChanged={loadData} />
         </div>
 
         <div className="mt-6">
@@ -992,14 +1003,14 @@ function App() {
         {/* Per-Symbol P&L Breakdown */}
         {stats && stats.total_trades > 0 && (
           <div className="mb-4">
-            <SymbolPnlView botId={view.botId} range={range} onRefresh={loadData} />
+            <SymbolPnlView key={refreshKey} botId={view.botId} range={range} onRefresh={loadData} />
           </div>
         )}
 
         {/* Period P&L Breakdown */}
         {stats && stats.total_trades > 0 && (
           <div className="mb-4">
-            <PeriodPnlView entityType="bot" entityId={view.botId} range={range} onRecalculated={loadData} />
+            <PeriodPnlView key={refreshKey} entityType="bot" entityId={view.botId} range={range} onRecalculated={loadData} />
           </div>
         )}
 
@@ -1176,7 +1187,19 @@ function App() {
       <main className="max-w-7xl mx-auto px-6 py-6">
         {renderBreadcrumb()}
 
-        {(range.start || range.end) && (
+        {rangeInvalid && (
+          <div className="flex items-center gap-2 mb-4 px-3 py-2 bg-red-600/10 border border-red-500/40 rounded-lg text-sm">
+            <Calendar size={14} className="text-red-300" />
+            <span className="text-red-100">
+              Invalid period: <span className="font-medium">{periodLabel(range)}</span> starts after it ends. Fix the From/To dates to see data.
+            </span>
+            <button onClick={() => setRange({})} className="ml-auto text-xs text-red-200 hover:text-white underline">
+              Show all time
+            </button>
+          </div>
+        )}
+
+        {!rangeInvalid && (range.start || range.end) && (
           <div className="flex items-center gap-2 mb-4 px-3 py-2 bg-blue-600/10 border border-blue-500/40 rounded-lg text-sm">
             <Calendar size={14} className="text-blue-300" />
             <span className="text-blue-100">
@@ -1194,10 +1217,10 @@ function App() {
           </div>
         )}
 
-        {view.type === 'portfolios' && renderPortfolios()}
-        {view.type === 'portfolio' && renderPortfolioDetail()}
-        {view.type === 'account' && renderAccountDetail()}
-        {view.type === 'bot' && renderBotDetail()}
+        {!rangeInvalid && view.type === 'portfolios' && renderPortfolios()}
+        {!rangeInvalid && view.type === 'portfolio' && renderPortfolioDetail()}
+        {!rangeInvalid && view.type === 'account' && renderAccountDetail()}
+        {!rangeInvalid && view.type === 'bot' && renderBotDetail()}
       </main>
 
       {showMarketImport && (
@@ -1219,7 +1242,10 @@ function App() {
           }
           range={range}
           onClose={() => setShowRangeRegenerate(false)}
-          onDone={loadData}
+          onDone={() => {
+            setRefreshKey((k) => k + 1);
+            loadData();
+          }}
         />
       )}
     </div>
