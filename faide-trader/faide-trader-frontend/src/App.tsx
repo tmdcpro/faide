@@ -1241,6 +1241,7 @@ function App() {
                 : view.portfolioId
           }
           range={range}
+          onRangeChange={setRange}
           onClose={() => setShowRangeRegenerate(false)}
           onDone={() => {
             setRefreshKey((k) => k + 1);

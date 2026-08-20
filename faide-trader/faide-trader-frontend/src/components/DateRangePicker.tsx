@@ -65,6 +65,7 @@ export function DateRangePicker({ value, onChange }: DateRangePickerProps) {
         title="Choose the period shown across stats, tables and charts"
       >
         <Calendar size={14} />
+        <span className="text-gray-400">Period:</span>
         <span>{periodLabel(value)}</span>
       </button>
 

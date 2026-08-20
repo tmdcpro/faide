@@ -7,14 +7,32 @@ interface RangeRegenerateDialogProps {
   entityType: 'bot' | 'account' | 'portfolio';
   entityId: number;
   range: DateRange;
+  onRangeChange: (range: DateRange) => void;
   onClose: () => void;
   onDone: () => void;
+}
+
+const PRESETS: { label: string; days: number }[] = [
+  { label: '7D', days: 7 },
+  { label: '30D', days: 30 },
+  { label: '90D', days: 90 },
+  { label: '1Y', days: 365 },
+];
+
+function toInput(value?: string): string {
+  if (!value) return '';
+  return value.length <= 10 ? `${value}T00:00` : value.slice(0, 16);
+}
+
+function toLocalDate(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
 export function RangeRegenerateDialog({
   entityType,
   entityId,
   range,
+  onRangeChange,
   onClose,
   onDone,
 }: RangeRegenerateDialogProps) {
@@ -30,9 +48,18 @@ export function RangeRegenerateDialog({
   const [result, setResult] = useState<RangeRegenerateResult | null>(null);
 
   const ready = Boolean(range.start && range.end);
+  const reversed = Boolean(
+    range.start && range.end && new Date(range.start) > new Date(range.end)
+  );
+
+  const applyPreset = (days: number) => {
+    const end = new Date();
+    const start = new Date(end.getTime() - (days - 1) * 24 * 60 * 60 * 1000);
+    onRangeChange({ start: toLocalDate(start), end: toLocalDate(end) });
+  };
 
   const submit = async () => {
-    if (!ready) return;
+    if (!ready || reversed) return;
     setRunning(true);
     setError(null);
     try {
@@ -70,11 +97,57 @@ export function RangeRegenerateDialog({
           Selected period: <span className="text-white font-medium">{periodLabel(range)}</span>
         </p>
 
-        {!ready ? (
+        {!result && (
+          <div className="bg-slate-900/60 border border-slate-700 rounded-lg p-3 mb-4">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs font-semibold text-gray-300 uppercase tracking-wide">
+                Period to generate
+              </span>
+              <div className="flex gap-1">
+                {PRESETS.map((p) => (
+                  <button
+                    key={p.label}
+                    onClick={() => applyPreset(p.days)}
+                    className="px-2 py-1 bg-slate-700 hover:bg-slate-600 rounded text-xs transition-colors"
+                  >
+                    {p.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <label className="text-xs text-gray-400">
+                From
+                <input
+                  type="datetime-local"
+                  value={toInput(range.start)}
+                  onChange={(e) => onRangeChange({ ...range, start: e.target.value || undefined })}
+                  className="mt-1 w-full px-2 py-1.5 bg-slate-900 border border-slate-600 rounded text-sm text-white"
+                />
+              </label>
+              <label className="text-xs text-gray-400">
+                To
+                <input
+                  type="datetime-local"
+                  value={toInput(range.end)}
+                  onChange={(e) => onRangeChange({ ...range, end: e.target.value || undefined })}
+                  className="mt-1 w-full px-2 py-1.5 bg-slate-900 border border-slate-600 rounded text-sm text-white"
+                />
+              </label>
+            </div>
+            <p className="text-[11px] text-gray-500 mt-2">
+              Leave the time at 00:00 to include the whole day. A single day = same From and To date.
+              This also sets the period shown across stats, tables and charts.
+            </p>
+          </div>
+        )}
+
+        {!ready || reversed ? (
           <div className="flex items-start gap-2 bg-yellow-500/10 border border-yellow-600/40 rounded-lg p-3 text-sm text-yellow-200">
             <AlertTriangle size={16} className="mt-0.5 shrink-0" />
-            Pick both a start and an end in the date picker first — regeneration is only ever applied
-            inside an explicit period.
+            {reversed
+              ? 'The start is after the end — fix the From/To dates to continue.'
+              : 'Set both a From and a To date above — regeneration is only ever applied inside an explicit period.'}
           </div>
         ) : result ? (
           <div className="space-y-2 text-sm">
@@ -207,7 +280,7 @@ export function RangeRegenerateDialog({
           {!result && (
             <button
               onClick={submit}
-              disabled={running || !ready}
+              disabled={running || !ready || reversed}
               className="flex items-center gap-2 px-4 py-2 bg-purple-600 hover:bg-purple-500 disabled:bg-purple-900 disabled:text-gray-400 rounded-lg text-sm font-medium transition-colors"
             >
               <RefreshCw size={14} className={running ? 'animate-spin' : ''} />
