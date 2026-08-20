@@ -1,36 +1,40 @@
-import { useState, useEffect } from 'react';
-import { api, type Transaction } from '@/lib/api';
+import { useState, useEffect, useCallback } from 'react';
+import { api, type DateRange, type Transaction } from '@/lib/api';
 import { Plus, Trash2, ArrowUpRight, ArrowDownRight } from 'lucide-react';
 
 interface TransactionsViewProps {
   accountId?: number;
   portfolioId?: number;
+  range?: DateRange;
   onChanged?: () => void;
 }
 
-export function TransactionsView({ accountId, portfolioId, onChanged }: TransactionsViewProps) {
+export function TransactionsView({ accountId, portfolioId, range, onChanged }: TransactionsViewProps) {
+  const startDate = range?.start;
+  const endDate = range?.end;
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [showAdd, setShowAdd] = useState(false);
   const [newTx, setNewTx] = useState({ type: 'deposit', amount: '', note: '', date: '' });
   const [submitting, setSubmitting] = useState(false);
 
-  useEffect(() => {
-    loadTransactions();
-  }, [accountId, portfolioId]);
-
-  const loadTransactions = async () => {
+  const loadTransactions = useCallback(async () => {
+    const selected = { start: startDate, end: endDate };
     try {
       if (accountId) {
-        const data = await api.listTransactions(accountId);
+        const data = await api.listTransactions(accountId, selected);
         setTransactions(data);
       } else if (portfolioId) {
-        const data = await api.listPortfolioTransactions(portfolioId);
+        const data = await api.listPortfolioTransactions(portfolioId, selected);
         setTransactions(data);
       }
     } catch {
       setTransactions([]);
     }
-  };
+  }, [accountId, portfolioId, startDate, endDate]);
+
+  useEffect(() => {
+    loadTransactions();
+  }, [loadTransactions]);
 
   const totalDeposits = transactions.filter(t => t.type === 'deposit').reduce((s, t) => s + t.amount, 0);
   const totalWithdrawals = transactions.filter(t => t.type === 'withdrawal').reduce((s, t) => s + t.amount, 0);

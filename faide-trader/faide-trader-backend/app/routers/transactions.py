@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
@@ -8,12 +9,19 @@ from app.database import get_db
 from app.models.portfolio import Transaction, Account
 from app.schemas import TransactionCreate, TransactionUpdate, TransactionResponse
 from app.services.calculation_engine import recalculate_account
+from app.services.date_range import filter_transactions, parse_range
 
 router = APIRouter(prefix="/api", tags=["transactions"])
 
 
 @router.get("/accounts/{account_id}/transactions", response_model=list[TransactionResponse])
-async def list_transactions(account_id: int, db: AsyncSession = Depends(get_db)):
+async def list_transactions(
+    account_id: int,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    db: AsyncSession = Depends(get_db),
+):
+    start, end = parse_range(start_date, end_date)
     account = await db.get(Account, account_id)
     if not account:
         raise HTTPException(status_code=404, detail="Account not found")
@@ -22,7 +30,7 @@ async def list_transactions(account_id: int, db: AsyncSession = Depends(get_db))
         .where(Transaction.account_id == account_id)
         .order_by(Transaction.date.desc())
     )
-    return result.scalars().all()
+    return filter_transactions(list(result.scalars().all()), start, end)
 
 
 @router.post("/accounts/{account_id}/transactions", response_model=TransactionResponse)
@@ -89,12 +97,18 @@ async def delete_transaction(tx_id: int, db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/portfolios/{portfolio_id}/transactions", response_model=list[TransactionResponse])
-async def list_portfolio_transactions(portfolio_id: int, db: AsyncSession = Depends(get_db)):
+async def list_portfolio_transactions(
+    portfolio_id: int,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    db: AsyncSession = Depends(get_db),
+):
     """List all transactions across all accounts in a portfolio."""
+    start, end = parse_range(start_date, end_date)
     result = await db.execute(
         select(Transaction)
         .join(Account)
         .where(Account.portfolio_id == portfolio_id)
         .order_by(Transaction.date.desc())
     )
-    return result.scalars().all()
+    return filter_transactions(list(result.scalars().all()), start, end)

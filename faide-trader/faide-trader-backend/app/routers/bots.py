@@ -1,3 +1,5 @@
+from typing import Optional
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -7,6 +9,7 @@ from app.database import get_db
 from app.models.portfolio import Bot, Account, Trade
 from app.schemas import BotCreate, BotUpdate, BotResponse, SymbolPnlResponse
 from app.services.calculation_engine import calculate_stats_from_trades
+from app.services.date_range import filter_trades, parse_range
 
 router = APIRouter(prefix="/api", tags=["bots"])
 
@@ -147,8 +150,14 @@ async def update_bot(
 
 
 @router.get("/bots/{bot_id}/symbol-pnl", response_model=list[SymbolPnlResponse])
-async def get_symbol_pnl(bot_id: int, db: AsyncSession = Depends(get_db)):
+async def get_symbol_pnl(
+    bot_id: int,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    db: AsyncSession = Depends(get_db),
+):
     """Get per-symbol P&L breakdown for a bot."""
+    start, end = parse_range(start_date, end_date)
     result = await db.execute(
         select(Bot).where(Bot.id == bot_id).options(selectinload(Bot.trades))
     )
@@ -158,7 +167,7 @@ async def get_symbol_pnl(bot_id: int, db: AsyncSession = Depends(get_db)):
 
     # Group trades by symbol
     symbol_trades: dict[str, list[Trade]] = {}
-    for trade in bot.trades:
+    for trade in filter_trades(list(bot.trades), start, end):
         symbol_trades.setdefault(trade.symbol, []).append(trade)
 
     # Build per-symbol stats

@@ -228,6 +228,34 @@ class RegenerateResponse(BaseModel):
     final_stats: dict = {}
 
 
+# --- Date-range scoped regeneration ---
+class RangeRegenerateRequest(BaseModel):
+    start_date: str  # ISO date or datetime, inclusive
+    end_date: str  # ISO date or datetime, inclusive (bare date = whole day)
+    target_net_pnl: Optional[float] = None
+    trades_per_day: Optional[float] = None
+    zero_activity_dates: list[str] = []
+    seed: Optional[int] = None
+    regenerate_transactions: bool = False
+    deposit_total: Optional[float] = None
+    withdrawal_total: Optional[float] = None
+    transaction_count: int = 2
+
+
+class RangeRegenerateResponse(BaseModel):
+    start_date: str
+    end_date: str
+    deleted_trades: int
+    generated_trades: int
+    deleted_transactions: int
+    generated_transactions: int
+    net_pnl: float
+    bots_regenerated: int
+    bots_skipped_locked: int
+    preserved_rows: int
+    zero_activity_days: list[str] = []
+
+
 # --- Market Data ---
 class MarketDataImport(BaseModel):
     exchange: str

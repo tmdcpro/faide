@@ -11,7 +11,7 @@ import {
   ResponsiveContainer,
   ReferenceDot,
 } from 'recharts';
-import { api, type EquityCurvePoint } from '@/lib/api';
+import { api, type DateRange, type EquityCurvePoint } from '@/lib/api';
 import {
   TrendingUp,
   Eye,
@@ -21,6 +21,7 @@ import {
 interface EquityChartProps {
   entityType: 'account' | 'portfolio';
   entityId: number;
+  range?: DateRange;
 }
 
 interface ToggleState {
@@ -42,10 +43,17 @@ function formatDate(dateStr: string): string {
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' });
 }
 
-function CustomTooltip({ active, payload }: { active?: boolean; payload?: Array<{ dataKey: string; value: number; color: string }> }) {
+interface TooltipEntry {
+  dataKey: string;
+  value: number;
+  color: string;
+  payload?: EquityCurvePoint & { _dateFormatted: string };
+}
+
+function CustomTooltip({ active, payload }: { active?: boolean; payload?: TooltipEntry[] }) {
   if (!active || !payload || payload.length === 0) return null;
 
-  const point = payload[0]?.payload as EquityCurvePoint & { _dateFormatted: string };
+  const point = payload[0]?.payload;
   if (!point) return null;
 
   return (
@@ -126,7 +134,9 @@ const TOGGLE_BUTTONS: { key: keyof ToggleState; label: string; color: string }[]
   { key: 'peakBalance', label: 'Peak', color: '#94a3b8' },
 ];
 
-export function EquityChart({ entityType, entityId }: EquityChartProps) {
+export function EquityChart({ entityType, entityId, range }: EquityChartProps) {
+  const startDate = range?.start;
+  const endDate = range?.end;
   const [data, setData] = useState<EquityCurvePoint[]>([]);
   const [loading, setLoading] = useState(false);
   const [toggles, setToggles] = useState<ToggleState>({
@@ -142,16 +152,17 @@ export function EquityChart({ entityType, entityId }: EquityChartProps) {
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
+      const selected = { start: startDate, end: endDate };
       const curve = entityType === 'account'
-        ? await api.getAccountEquityCurve(entityId)
-        : await api.getPortfolioEquityCurve(entityId);
+        ? await api.getAccountEquityCurve(entityId, selected)
+        : await api.getPortfolioEquityCurve(entityId, selected);
       setData(curve);
     } catch (e) {
       console.error('Failed to load equity curve:', e);
     } finally {
       setLoading(false);
     }
-  }, [entityType, entityId]);
+  }, [entityType, entityId, startDate, endDate]);
 
   useEffect(() => {
     loadData();
