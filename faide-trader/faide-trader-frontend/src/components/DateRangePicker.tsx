@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Calendar, X } from 'lucide-react';
 import type { DateRange } from '@/lib/api';
+import { PeriodFields } from '@/components/PeriodFields';
 
 interface DateRangePickerProps {
   value: DateRange;
@@ -13,11 +14,6 @@ const PRESETS: { label: string; days: number }[] = [
   { label: '90D', days: 90 },
   { label: '1Y', days: 365 },
 ];
-
-function toInput(value?: string): string {
-  if (!value) return '';
-  return value.length <= 10 ? `${value}T00:00` : value.slice(0, 16);
-}
 
 function toLocalDate(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -100,23 +96,10 @@ export function DateRangePicker({ value, onChange }: DateRangePickerProps) {
             ))}
           </div>
 
-          <label className="block text-xs text-gray-400 mb-1">From</label>
-          <input
-            type="datetime-local"
-            value={toInput(value.start)}
-            onChange={(e) => onChange({ ...value, start: e.target.value || undefined })}
-            className="w-full mb-3 px-2 py-1.5 bg-slate-900 border border-slate-600 rounded text-sm"
-          />
-
-          <label className="block text-xs text-gray-400 mb-1">To</label>
-          <input
-            type="datetime-local"
-            value={toInput(value.end)}
-            onChange={(e) => onChange({ ...value, end: e.target.value || undefined })}
-            className="w-full mb-1 px-2 py-1.5 bg-slate-900 border border-slate-600 rounded text-sm"
-          />
-          <p className="text-[11px] text-gray-500 mb-3">
-            Leave the time at 00:00 to include the whole day. A single day = same From and To date.
+          <PeriodFields value={value} onChange={onChange} />
+          <p className="text-[11px] text-gray-500 mt-2 mb-3">
+            Times are optional — leave them empty to cover whole days. A single day = same From and
+            To date.
           </p>
 
           <div className="flex justify-between">
