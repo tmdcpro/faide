@@ -1,5 +1,5 @@
 from collections import defaultdict
-from datetime import datetime, date as date_type
+from datetime import datetime, date as date_type, time
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -554,11 +554,13 @@ async def get_pnl_records(
     if not bot:
         raise HTTPException(status_code=404, detail="Bot not found")
 
+    # Records are day-granular, so a window with a time-of-day still returns the
+    # whole boundary day rather than dropping it.
     conditions = [PnlRecord.bot_id == bot_id, PnlRecord.period_type == period]
     if start:
-        conditions.append(PnlRecord.date >= start)
+        conditions.append(PnlRecord.date >= datetime.combine(start.date(), time.min))
     if end:
-        conditions.append(PnlRecord.date <= end)
+        conditions.append(PnlRecord.date <= datetime.combine(end.date(), time.max))
 
     result = await db.execute(
         select(PnlRecord).where(*conditions).order_by(PnlRecord.date)

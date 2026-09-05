@@ -1,9 +1,10 @@
 """Date-range filtering helpers shared by the read endpoints.
 
 A range is inclusive on both ends. A bare date (``2026-06-13``) as ``end`` covers
-the whole day, so the caller does not have to pass ``23:59:59``.
+the whole day, so the caller does not have to pass ``23:59:59``. An explicit
+time (``2026-06-13T00:00``) is honoured exactly.
 """
-from datetime import datetime, time, timedelta
+from datetime import datetime, timedelta
 from typing import Optional
 
 from fastapi import HTTPException
@@ -30,7 +31,7 @@ def parse_range(
             end = datetime.fromisoformat(end_date)
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid end_date format")
-        if end.time() == time.min:
+        if len(end_date.strip()) == 10:
             end = end + timedelta(days=1) - timedelta(microseconds=1)
 
     if start and end and start > end:

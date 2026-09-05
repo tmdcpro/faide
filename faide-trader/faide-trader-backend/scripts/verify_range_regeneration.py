@@ -30,14 +30,24 @@ TX_SNAPSHOT = """
     WHERE date < ? OR date > ? ORDER BY id
 """
 
+# cumulative_pnl is a running total and legitimately shifts with in-range P&L.
+PNL_SNAPSHOT = """
+    SELECT id, bot_id, date, period_type, pnl, trade_count, win_count, loss_count, is_pinned
+    FROM pnl_records
+    WHERE date < ? OR date > ? ORDER BY id
+"""
 
-def snapshot(path: str, start: datetime, end: datetime) -> tuple[list, list]:
+
+def snapshot(path: str, start: datetime, end: datetime) -> tuple[list, list, list]:
     s, e = start.isoformat(sep=" "), end.isoformat(sep=" ")
+    day_start = datetime.combine(start.date(), datetime.min.time()).isoformat(sep=" ")
+    day_end = datetime.combine(end.date(), datetime.max.time()).isoformat(sep=" ")
     conn = sqlite3.connect(path)
     trades = conn.execute(TRADE_SNAPSHOT, (s, e)).fetchall()
     txs = conn.execute(TX_SNAPSHOT, (s, e)).fetchall()
+    pnl = conn.execute(PNL_SNAPSHOT, (day_start, day_end)).fetchall()
     conn.close()
-    return trades, txs
+    return trades, txs, pnl
 
 
 async def run_case(db_path: str, start: datetime, end: datetime, **opts) -> dict:
@@ -88,9 +98,15 @@ async def main() -> int:
                 print(f"FAIL {label}: no trades generated")
                 failures += 1
                 continue
+            target = opts.get("target_net_pnl")
+            if target is not None and abs(result["net_pnl"] - target) > 1.0:
+                print(f"FAIL {label}: period net P&L {result['net_pnl']} != target {target}")
+                failures += 1
+                continue
             print(
                 f"PASS {label}: -{result['deleted_trades']} / +{result['generated_trades']} "
-                f"trades, {len(before[0])} trades + {len(before[1])} transactions preserved byte-identical"
+                f"trades, {len(before[0])} trades + {len(before[1])} transactions "
+                f"+ {len(before[2])} P&L records preserved byte-identical"
             )
 
     return 1 if failures else 0

@@ -1,6 +1,6 @@
 from datetime import datetime
 from typing import Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 # --- Portfolio ---
@@ -233,13 +233,13 @@ class RangeRegenerateRequest(BaseModel):
     start_date: str  # ISO date or datetime, inclusive
     end_date: str  # ISO date or datetime, inclusive (bare date = whole day)
     target_net_pnl: Optional[float] = None
-    trades_per_day: Optional[float] = None
-    zero_activity_dates: list[str] = []
+    trades_per_day: Optional[float] = Field(default=None, gt=0, le=200)
+    zero_activity_dates: list[str] = Field(default=[], max_length=3660)
     seed: Optional[int] = None
     regenerate_transactions: bool = False
-    deposit_total: Optional[float] = None
-    withdrawal_total: Optional[float] = None
-    transaction_count: int = 2
+    deposit_total: Optional[float] = Field(default=None, ge=0)
+    withdrawal_total: Optional[float] = Field(default=None, ge=0)
+    transaction_count: int = Field(default=2, ge=1, le=500)
 
 
 class RangeRegenerateResponse(BaseModel):

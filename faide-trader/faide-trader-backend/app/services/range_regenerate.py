@@ -9,10 +9,14 @@ whose timestamps fall completely inside the requested window:
 * transactions are only touched when the caller explicitly asks for it;
 * derived rows (daily P&L records, account balances) are rebuilt without
   re-deriving individual trade P&L, so out-of-range trades keep their exact
-  stored values.
+  stored values;
+* only daily P&L records for days inside the window are rebuilt; out-of-range
+  records keep their identity and stored values, and only their derived running
+  ``cumulative_pnl`` is refreshed.
 
-Every run snapshots every out-of-range trade and transaction, and re-checks the
-snapshot before committing. A mismatch rolls the whole run back.
+Every run snapshots every out-of-range trade, transaction and daily P&L record,
+and re-checks the snapshot before committing. A mismatch rolls the whole run
+back.
 """
 import hashlib
 import random
@@ -23,8 +27,9 @@ from typing import Optional
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.portfolio import Account, Bot, MarketData, Trade, Transaction
-from app.services.calculation_engine import rebuild_pnl_records
+from app.models.portfolio import Account, Bot, MarketData, PnlRecord, Trade, Transaction
+
+MAX_RANGE_DAYS = 3660
 
 STRATEGY_TRADES_PER_DAY = {
     "grid": 1.0,
@@ -86,8 +91,35 @@ def _fingerprint(rows: list[tuple]) -> str:
 async def _out_of_range_fingerprint(
     db: AsyncSession, start: datetime, end: datetime, include_transactions: bool
 ) -> tuple[str, int]:
-    """Fingerprint every trade (and optionally transaction) outside the window."""
+    """Fingerprint every out-of-window trade, daily P&L record and transaction.
+
+    ``cumulative_pnl`` is deliberately excluded: it is a running total derived
+    from every earlier record, so it moves whenever in-range P&L changes.
+    """
     activity = func.coalesce(Trade.exit_time, Trade.entry_time)
+    pnl_rows = (
+        await db.execute(
+            select(
+                PnlRecord.id,
+                PnlRecord.bot_id,
+                PnlRecord.date,
+                PnlRecord.period_type,
+                PnlRecord.pnl,
+                PnlRecord.trade_count,
+                PnlRecord.win_count,
+                PnlRecord.loss_count,
+                PnlRecord.is_pinned,
+            )
+            .where(
+                or_(
+                    PnlRecord.date < datetime.combine(start.date(), datetime.min.time()),
+                    PnlRecord.date > datetime.combine(end.date(), datetime.max.time()),
+                )
+            )
+            .order_by(PnlRecord.id)
+        )
+    ).all()
+
     trade_rows = (
         await db.execute(
             select(
@@ -113,6 +145,7 @@ async def _out_of_range_fingerprint(
     ).all()
 
     rows = [("trade",) + tuple(r) for r in trade_rows]
+    rows += [("pnl",) + tuple(r) for r in pnl_rows]
 
     if include_transactions:
         tx_rows = (
@@ -270,6 +303,8 @@ def _apply_exit_price(trade: Trade) -> None:
 def _distribute_targets(
     bots: list[Bot], total: float, rng: random.Random
 ) -> dict[int, float]:
+    if not bots:
+        return {}
     if len(bots) == 1:
         return {bots[0].id: round(total, 2)}
 
@@ -285,6 +320,101 @@ def _distribute_targets(
         targets[bots[-1].id] + (total - sum(targets.values())), 2
     )
     return targets
+
+
+async def _rebuild_pnl_records_in_range(
+    db: AsyncSession, bot_id: int, start: datetime, end: datetime
+) -> None:
+    """Rebuild daily P&L records for the window's days only.
+
+    Records outside the window keep their row identity and stored values;
+    pinned in-range records are kept too. Only the derived ``cumulative_pnl``
+    running total is refreshed across the bot's whole history.
+    """
+    first_day = datetime.combine(start.date(), datetime.min.time())
+    last_day = datetime.combine(end.date(), datetime.max.time())
+
+    records = list(
+        (
+            await db.execute(
+                select(PnlRecord).where(
+                    PnlRecord.bot_id == bot_id, PnlRecord.period_type == "daily"
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    pinned_days = {
+        r.date.date()
+        for r in records
+        if r.is_pinned and first_day <= r.date <= last_day
+    }
+    for record in records:
+        if not record.is_pinned and first_day <= record.date <= last_day:
+            await db.delete(record)
+    await db.flush()
+
+    activity = func.coalesce(Trade.exit_time, Trade.entry_time)
+    in_range_trades = list(
+        (
+            await db.execute(
+                select(Trade).where(
+                    Trade.bot_id == bot_id,
+                    activity >= first_day,
+                    activity <= last_day,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    daily: dict[date, dict[str, float]] = {}
+    for trade in in_range_trades:
+        day = (trade.exit_time or trade.entry_time).date()
+        if day in pinned_days:
+            continue
+        bucket = daily.setdefault(day, {"pnl": 0.0, "trades": 0, "wins": 0, "losses": 0})
+        bucket["pnl"] += trade.pnl
+        bucket["trades"] += 1
+        if trade.pnl > 0:
+            bucket["wins"] += 1
+        else:
+            bucket["losses"] += 1
+
+    for day, bucket in daily.items():
+        db.add(
+            PnlRecord(
+                bot_id=bot_id,
+                date=datetime.combine(day, datetime.min.time()),
+                period_type="daily",
+                pnl=round(bucket["pnl"], 2),
+                cumulative_pnl=0.0,
+                trade_count=int(bucket["trades"]),
+                win_count=int(bucket["wins"]),
+                loss_count=int(bucket["losses"]),
+                is_pinned=False,
+            )
+        )
+    await db.flush()
+
+    all_records = list(
+        (
+            await db.execute(
+                select(PnlRecord)
+                .where(PnlRecord.bot_id == bot_id, PnlRecord.period_type == "daily")
+                .order_by(PnlRecord.date)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    cumulative = 0.0
+    for record in all_records:
+        cumulative += record.pnl
+        record.cumulative_pnl = round(cumulative, 2)
+    await db.flush()
 
 
 async def _update_account_balance(db: AsyncSession, account: Account) -> None:
@@ -336,6 +466,10 @@ async def regenerate_range(
         }
 
     start, end = opts.start, opts.end
+    if (end - start).days > MAX_RANGE_DAYS:
+        raise RangeRegenerationError(
+            f"Selected period is too long (max {MAX_RANGE_DAYS} days)"
+        )
     rng = random.Random(opts.seed if opts.seed is not None else int(start.timestamp()))
     zero_days = set(opts.zero_activity_dates)
     active_days = _active_days(start, end, zero_days)
@@ -351,6 +485,19 @@ async def regenerate_range(
     open_bots = [b for b in bots if not b.is_pinned]
     skipped = len(bots) - len(open_bots)
     account_ids = {b.account_id for b in open_bots}
+
+    if not open_bots:
+        return {
+            "deleted_trades": 0,
+            "generated_trades": 0,
+            "deleted_transactions": 0,
+            "generated_transactions": 0,
+            "net_pnl": 0.0,
+            "bots_regenerated": 0,
+            "bots_skipped_locked": skipped,
+            "preserved_rows": preserved_rows,
+            "zero_activity_days": [d.isoformat() for d in sorted(zero_days)],
+        }
 
     # ── delete in-range, unpinned, fully-contained trades ──────────────
     activity = func.coalesce(Trade.exit_time, Trade.entry_time)
@@ -421,7 +568,23 @@ async def regenerate_range(
         await db.flush()
 
     # ── generate replacement trades ────────────────────────────────────
-    target_total = opts.target_net_pnl if opts.target_net_pnl is not None else 0.0
+    # The target is the period's total, so P&L from in-range trades that were
+    # preserved (pinned or straddling a boundary) counts towards it.
+    preserved_pnl = float(
+        (
+            await db.execute(
+                select(func.coalesce(func.sum(Trade.pnl), 0.0)).where(
+                    Trade.bot_id.in_([b.id for b in open_bots]),
+                    activity >= start,
+                    activity <= end,
+                )
+            )
+        ).scalar()
+        or 0.0
+    )
+    target_total = (
+        opts.target_net_pnl - preserved_pnl if opts.target_net_pnl is not None else 0.0
+    )
     targets = (
         _distribute_targets(open_bots, target_total, rng)
         if opts.target_net_pnl is not None
@@ -429,7 +592,7 @@ async def regenerate_range(
     )
 
     generated = 0
-    net_pnl = 0.0
+    net_pnl = preserved_pnl
     for bot in open_bots:
         symbols = bot.symbols or ([bot.symbol] if bot.symbol else ["BTC/USDT"])
         prices = {s: await _reference_price(db, bot, s, start) for s in symbols}
@@ -451,10 +614,7 @@ async def regenerate_range(
 
     # ── rebuild derived rows only ──────────────────────────────────────
     for bot in open_bots:
-        bot_trades = list(
-            (await db.execute(select(Trade).where(Trade.bot_id == bot.id))).scalars().all()
-        )
-        await rebuild_pnl_records(db, bot.id, bot_trades)
+        await _rebuild_pnl_records_in_range(db, bot.id, start, end)
 
     for account_id in account_ids:
         account = await db.get(Account, account_id)
