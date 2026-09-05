@@ -484,20 +484,9 @@ async def regenerate_range(
 
     open_bots = [b for b in bots if not b.is_pinned]
     skipped = len(bots) - len(open_bots)
-    account_ids = {b.account_id for b in open_bots}
-
-    if not open_bots:
-        return {
-            "deleted_trades": 0,
-            "generated_trades": 0,
-            "deleted_transactions": 0,
-            "generated_transactions": 0,
-            "net_pnl": 0.0,
-            "bots_regenerated": 0,
-            "bots_skipped_locked": skipped,
-            "preserved_rows": preserved_rows,
-            "zero_activity_days": [d.isoformat() for d in sorted(zero_days)],
-        }
+    # Transactions belong to the selected accounts, so they are still replaced
+    # when every bot under them is locked.
+    account_ids = {b.account_id for b in bots}
 
     # ── delete in-range, unpinned, fully-contained trades ──────────────
     activity = func.coalesce(Trade.exit_time, Trade.entry_time)
@@ -551,7 +540,7 @@ async def regenerate_range(
                 continue
             count = max(1, opts.transaction_count)
             per_tx = round(total / count, 2)
-            span = max((end - start).total_seconds(), 1)
+            span = max((end - start).total_seconds(), 0)
             for i in range(count):
                 when = start + timedelta(seconds=span * (i + 1) / (count + 1))
                 amount = per_tx if i < count - 1 else round(total - per_tx * (count - 1), 2)
@@ -570,11 +559,12 @@ async def regenerate_range(
     # ── generate replacement trades ────────────────────────────────────
     # The target is the period's total, so P&L from in-range trades that were
     # preserved (pinned or straddling a boundary) counts towards it.
+    # Locked bots keep their in-range trades, so their P&L counts too.
     preserved_pnl = float(
         (
             await db.execute(
                 select(func.coalesce(func.sum(Trade.pnl), 0.0)).where(
-                    Trade.bot_id.in_([b.id for b in open_bots]),
+                    Trade.bot_id.in_([b.id for b in bots]),
                     activity >= start,
                     activity <= end,
                 )

@@ -3,6 +3,9 @@
 A range is inclusive on both ends. A bare date (``2026-06-13``) as ``end`` covers
 the whole day, so the caller does not have to pass ``23:59:59``. An explicit
 time (``2026-06-13T00:00``) is honoured exactly.
+
+Stored timestamps are naive, so bounds must be naive too; an offset or ``Z``
+suffix is rejected rather than silently compared against naive values.
 """
 from datetime import datetime, timedelta
 from typing import Optional
@@ -26,11 +29,19 @@ def parse_range(
             start = datetime.fromisoformat(start_date)
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid start_date format")
+        if start.tzinfo is not None:
+            raise HTTPException(
+                status_code=400, detail="start_date must not carry a timezone offset"
+            )
     if end_date:
         try:
             end = datetime.fromisoformat(end_date)
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid end_date format")
+        if end.tzinfo is not None:
+            raise HTTPException(
+                status_code=400, detail="end_date must not carry a timezone offset"
+            )
         if len(end_date.strip()) == 10:
             end = end + timedelta(days=1) - timedelta(microseconds=1)
 

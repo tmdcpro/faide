@@ -1,5 +1,24 @@
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
+interface ValidationIssue {
+  loc?: (string | number)[];
+  msg?: string;
+}
+
+/** FastAPI returns a string for HTTPException and a list of issues for 422s. */
+function formatDetail(detail: unknown): string {
+  if (typeof detail === 'string') return detail;
+  if (Array.isArray(detail)) {
+    return (detail as ValidationIssue[])
+      .map((issue) => {
+        const field = issue.loc?.filter((p) => p !== 'body').join('.');
+        return field ? `${field}: ${issue.msg ?? 'invalid value'}` : issue.msg ?? 'invalid value';
+      })
+      .join('; ');
+  }
+  return '';
+}
+
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${API_URL}${path}`, {
     headers: { 'Content-Type': 'application/json' },
@@ -7,7 +26,7 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(err.detail || res.statusText);
+    throw new Error(formatDetail(err.detail) || res.statusText);
   }
   return res.json();
 }
