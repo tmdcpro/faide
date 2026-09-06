@@ -1,5 +1,6 @@
 from collections import defaultdict
-from datetime import datetime, date as date_type
+from datetime import datetime, date as date_type, time
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select, func
@@ -23,7 +24,20 @@ from app.schemas import (
     SetConstraintResponse,
     RegenerateRequest,
     RegenerateResponse,
+    RangeRegenerateRequest,
+    RangeRegenerateResponse,
     EquityCurvePoint,
+)
+from app.services.date_range import (
+    balance_at,
+    filter_trades,
+    filter_transactions,
+    parse_range,
+)
+from app.services.range_regenerate import (
+    RangeRegenerateOptions,
+    RangeRegenerationError,
+    regenerate_range,
 )
 from app.services.calculation_engine import get_account_net_deposits
 from app.services.calculation_engine import (
@@ -531,16 +545,25 @@ async def set_constraint(data: SetConstraintRequest, db: AsyncSession = Depends(
 async def get_pnl_records(
     bot_id: int,
     period: str = "daily",
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
 ):
+    start, end = parse_range(start_date, end_date)
     bot = await db.get(Bot, bot_id)
     if not bot:
         raise HTTPException(status_code=404, detail="Bot not found")
 
+    # Records are day-granular, so a window with a time-of-day still returns the
+    # whole boundary day rather than dropping it.
+    conditions = [PnlRecord.bot_id == bot_id, PnlRecord.period_type == period]
+    if start:
+        conditions.append(PnlRecord.date >= datetime.combine(start.date(), time.min))
+    if end:
+        conditions.append(PnlRecord.date <= datetime.combine(end.date(), time.max))
+
     result = await db.execute(
-        select(PnlRecord)
-        .where(PnlRecord.bot_id == bot_id, PnlRecord.period_type == period)
-        .order_by(PnlRecord.date)
+        select(PnlRecord).where(*conditions).order_by(PnlRecord.date)
     )
     return list(result.scalars().all())
 
@@ -584,7 +607,13 @@ async def update_pnl_record(
 
 
 @router.get("/stats/portfolio/{portfolio_id}", response_model=StatsResponse)
-async def get_portfolio_stats(portfolio_id: int, db: AsyncSession = Depends(get_db)):
+async def get_portfolio_stats(
+    portfolio_id: int,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    db: AsyncSession = Depends(get_db),
+):
+    start, end = parse_range(start_date, end_date)
     result = await db.execute(
         select(Account).where(Account.portfolio_id == portfolio_id)
     )
@@ -604,12 +633,21 @@ async def get_portfolio_stats(portfolio_id: int, db: AsyncSession = Depends(get_
             )
             all_trades.extend(result.scalars().all())
 
-    stats = calculate_stats_from_trades(all_trades, total_initial if total_initial > 0 else 10000.0)
+    baseline = await balance_at(
+        db, [a.id for a in accounts], total_initial if total_initial > 0 else 10000.0, start
+    )
+    stats = calculate_stats_from_trades(filter_trades(all_trades, start, end), baseline)
     return StatsResponse(**stats)
 
 
 @router.get("/stats/account/{account_id}", response_model=StatsResponse)
-async def get_account_stats(account_id: int, db: AsyncSession = Depends(get_db)):
+async def get_account_stats(
+    account_id: int,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    db: AsyncSession = Depends(get_db),
+):
+    start, end = parse_range(start_date, end_date)
     account = await db.get(Account, account_id)
     if not account:
         raise HTTPException(status_code=404, detail="Account not found")
@@ -624,12 +662,19 @@ async def get_account_stats(account_id: int, db: AsyncSession = Depends(get_db))
         )
         all_trades.extend(result.scalars().all())
 
-    stats = calculate_stats_from_trades(all_trades, account.initial_balance)
+    baseline = await balance_at(db, [account_id], account.initial_balance, start)
+    stats = calculate_stats_from_trades(filter_trades(all_trades, start, end), baseline)
     return StatsResponse(**stats)
 
 
 @router.get("/stats/bot/{bot_id}", response_model=StatsResponse)
-async def get_bot_stats(bot_id: int, db: AsyncSession = Depends(get_db)):
+async def get_bot_stats(
+    bot_id: int,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    db: AsyncSession = Depends(get_db),
+):
+    start, end = parse_range(start_date, end_date)
     bot = await db.get(Bot, bot_id)
     if not bot:
         raise HTTPException(status_code=404, detail="Bot not found")
@@ -642,7 +687,7 @@ async def get_bot_stats(bot_id: int, db: AsyncSession = Depends(get_db)):
     )
     trades = list(result.scalars().all())
 
-    stats = calculate_stats_from_trades(trades, initial_balance)
+    stats = calculate_stats_from_trades(filter_trades(trades, start, end), initial_balance)
     return StatsResponse(**stats)
 
 
@@ -652,9 +697,12 @@ async def get_bot_stats(bot_id: int, db: AsyncSession = Depends(get_db)):
 async def get_period_pnl(
     bot_id: int,
     period_type: str = "monthly",
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
 ):
     """Get P&L broken down by period (daily/weekly/monthly) with drawdown."""
+    start, end = parse_range(start_date, end_date)
     bot = await db.get(Bot, bot_id)
     if not bot:
         raise HTTPException(status_code=404, detail="Bot not found")
@@ -668,7 +716,9 @@ async def get_period_pnl(
     trades = list(result.scalars().all())
 
     pinned = await get_pinned_periods(db, bot_id, period_type)
-    periods = aggregate_period_pnl(trades, period_type, initial_balance, pinned)
+    periods = aggregate_period_pnl(
+        filter_trades(trades, start, end), period_type, initial_balance, pinned
+    )
     return [PeriodPnlResponse(**p) for p in periods]
 
 
@@ -676,9 +726,12 @@ async def get_period_pnl(
 async def get_account_period_pnl(
     account_id: int,
     period_type: str = "monthly",
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
 ):
     """Get account-level P&L broken down by period."""
+    start, end = parse_range(start_date, end_date)
     account = await db.get(Account, account_id)
     if not account:
         raise HTTPException(status_code=404, detail="Account not found")
@@ -694,7 +747,10 @@ async def get_account_period_pnl(
         all_trades.extend(result.scalars().all())
 
     all_trades.sort(key=lambda t: t.entry_time)
-    periods = aggregate_period_pnl(all_trades, period_type, account.initial_balance)
+    baseline = await balance_at(db, [account_id], account.initial_balance, start)
+    periods = aggregate_period_pnl(
+        filter_trades(all_trades, start, end), period_type, baseline
+    )
     return [PeriodPnlResponse(**p) for p in periods]
 
 
@@ -702,9 +758,12 @@ async def get_account_period_pnl(
 async def get_portfolio_period_pnl(
     portfolio_id: int,
     period_type: str = "monthly",
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
 ):
     """Get portfolio-level P&L broken down by period."""
+    start, end = parse_range(start_date, end_date)
     result = await db.execute(
         select(Account).where(Account.portfolio_id == portfolio_id)
     )
@@ -723,7 +782,12 @@ async def get_portfolio_period_pnl(
             all_trades.extend(result.scalars().all())
 
     all_trades.sort(key=lambda t: t.entry_time)
-    periods = aggregate_period_pnl(all_trades, period_type, total_initial if total_initial > 0 else 10000.0)
+    baseline = await balance_at(
+        db, [a.id for a in accounts], total_initial if total_initial > 0 else 10000.0, start
+    )
+    periods = aggregate_period_pnl(
+        filter_trades(all_trades, start, end), period_type, baseline
+    )
     return [PeriodPnlResponse(**p) for p in periods]
 
 
@@ -806,9 +870,12 @@ def _build_equity_curve(
 @router.get("/accounts/{account_id}/equity-curve", response_model=list[EquityCurvePoint])
 async def get_account_equity_curve(
     account_id: int,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
 ):
     """Get daily equity curve for an account."""
+    start, end = parse_range(start_date, end_date)
     account = await db.get(Account, account_id)
     if not account:
         raise HTTPException(status_code=404, detail="Account not found")
@@ -831,16 +898,24 @@ async def get_account_equity_curve(
     )
     transactions = list(result.scalars().all())
 
-    curve = _build_equity_curve(all_trades, account.initial_balance, transactions)
+    baseline = await balance_at(db, [account_id], account.initial_balance, start)
+    curve = _build_equity_curve(
+        filter_trades(all_trades, start, end),
+        baseline,
+        filter_transactions(transactions, start, end),
+    )
     return [EquityCurvePoint(**p) for p in curve]
 
 
 @router.get("/portfolios/{portfolio_id}/equity-curve", response_model=list[EquityCurvePoint])
 async def get_portfolio_equity_curve(
     portfolio_id: int,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
 ):
     """Get daily equity curve for an entire portfolio."""
+    start, end = parse_range(start_date, end_date)
     result = await db.execute(
         select(Account).where(Account.portfolio_id == portfolio_id)
     )
@@ -870,7 +945,12 @@ async def get_portfolio_equity_curve(
 
     all_trades.sort(key=lambda t: (t.exit_time or t.entry_time))
 
-    curve = _build_equity_curve(all_trades, total_initial, all_transactions)
+    baseline = await balance_at(db, [a.id for a in accounts], total_initial, start)
+    curve = _build_equity_curve(
+        filter_trades(all_trades, start, end),
+        baseline,
+        filter_transactions(all_transactions, start, end),
+    )
     return [EquityCurvePoint(**p) for p in curve]
 
 
@@ -1502,3 +1582,107 @@ async def _get_portfolio_stats(db: AsyncSession, portfolio_id: int, accounts: li
         "win_rate": round(total_wins / total_trades * 100, 2) if total_trades > 0 else 0.0,
         "account_count": len(accounts),
     }
+
+
+# --- Date-range scoped regeneration ---
+
+async def _run_range_regeneration(
+    db: AsyncSession,
+    bots: list[Bot],
+    data: RangeRegenerateRequest,
+) -> RangeRegenerateResponse:
+    start, end = parse_range(data.start_date, data.end_date)
+    if start is None or end is None:
+        raise HTTPException(status_code=400, detail="start_date and end_date are required")
+
+    try:
+        zero_days = [datetime.fromisoformat(d).date() for d in data.zero_activity_dates]
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid zero_activity_dates entry")
+
+    opts = RangeRegenerateOptions(
+        start=start,
+        end=end,
+        target_net_pnl=data.target_net_pnl,
+        trades_per_day=data.trades_per_day,
+        zero_activity_dates=zero_days,
+        seed=data.seed,
+        regenerate_transactions=data.regenerate_transactions,
+        deposit_total=data.deposit_total,
+        withdrawal_total=data.withdrawal_total,
+        transaction_count=data.transaction_count,
+    )
+
+    try:
+        result = await regenerate_range(db, bots, opts)
+    except RangeRegenerationError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+
+    return RangeRegenerateResponse(
+        start_date=start.isoformat(),
+        end_date=end.isoformat(),
+        **result,
+    )
+
+
+@router.post("/bots/{bot_id}/regenerate-range", response_model=RangeRegenerateResponse)
+async def regenerate_bot_range(
+    bot_id: int,
+    data: RangeRegenerateRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Regenerate a bot's trades inside a date range, leaving all other data intact."""
+    bot = await db.get(Bot, bot_id)
+    if not bot:
+        raise HTTPException(status_code=404, detail="Bot not found")
+    account = await db.get(Account, bot.account_id)
+    if account and account.is_pinned:
+        raise HTTPException(status_code=400, detail="Account is frozen")
+    if data.regenerate_transactions:
+        raise HTTPException(
+            status_code=400,
+            detail="Transactions are account-level; regenerate them from the account or portfolio",
+        )
+    return await _run_range_regeneration(db, [bot], data)
+
+
+@router.post("/accounts/{account_id}/regenerate-range", response_model=RangeRegenerateResponse)
+async def regenerate_account_range(
+    account_id: int,
+    data: RangeRegenerateRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Regenerate an account's trades inside a date range, leaving all other data intact."""
+    account = await db.get(Account, account_id)
+    if not account:
+        raise HTTPException(status_code=404, detail="Account not found")
+    if account.is_pinned:
+        raise HTTPException(status_code=400, detail="Account is frozen")
+
+    bots = list((await db.execute(select(Bot).where(Bot.account_id == account_id))).scalars().all())
+    return await _run_range_regeneration(db, bots, data)
+
+
+@router.post("/portfolios/{portfolio_id}/regenerate-range", response_model=RangeRegenerateResponse)
+async def regenerate_portfolio_range(
+    portfolio_id: int,
+    data: RangeRegenerateRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Regenerate a portfolio's trades inside a date range, leaving all other data intact."""
+    accounts = list(
+        (await db.execute(select(Account).where(Account.portfolio_id == portfolio_id)))
+        .scalars()
+        .all()
+    )
+    if not accounts:
+        raise HTTPException(status_code=404, detail="Portfolio has no accounts")
+
+    bots: list[Bot] = []
+    for account in accounts:
+        if account.is_pinned:
+            continue
+        bots.extend(
+            (await db.execute(select(Bot).where(Bot.account_id == account.id))).scalars().all()
+        )
+    return await _run_range_regeneration(db, bots, data)

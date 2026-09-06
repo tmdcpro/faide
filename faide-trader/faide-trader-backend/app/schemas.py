@@ -1,6 +1,6 @@
 from datetime import datetime
 from typing import Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 # --- Portfolio ---
@@ -226,6 +226,34 @@ class RegenerateResponse(BaseModel):
     constraints_applied: dict[str, float] = {}
     bot_stats: dict = {}
     final_stats: dict = {}
+
+
+# --- Date-range scoped regeneration ---
+class RangeRegenerateRequest(BaseModel):
+    start_date: str  # ISO date or datetime, inclusive
+    end_date: str  # ISO date or datetime, inclusive (bare date = whole day)
+    target_net_pnl: Optional[float] = None
+    trades_per_day: Optional[float] = Field(default=None, gt=0, le=200)
+    zero_activity_dates: list[str] = Field(default=[], max_length=3660)
+    seed: Optional[int] = None
+    regenerate_transactions: bool = False
+    deposit_total: Optional[float] = Field(default=None, ge=0)
+    withdrawal_total: Optional[float] = Field(default=None, ge=0)
+    transaction_count: int = Field(default=2, ge=1, le=500)
+
+
+class RangeRegenerateResponse(BaseModel):
+    start_date: str
+    end_date: str
+    deleted_trades: int
+    generated_trades: int
+    deleted_transactions: int
+    generated_transactions: int
+    net_pnl: float
+    bots_regenerated: int
+    bots_skipped_locked: int
+    preserved_rows: int
+    zero_activity_days: list[str] = []
 
 
 # --- Market Data ---

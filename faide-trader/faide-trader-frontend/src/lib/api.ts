@@ -1,5 +1,24 @@
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
+interface ValidationIssue {
+  loc?: (string | number)[];
+  msg?: string;
+}
+
+/** FastAPI returns a string for HTTPException and a list of issues for 422s. */
+function formatDetail(detail: unknown): string {
+  if (typeof detail === 'string') return detail;
+  if (Array.isArray(detail)) {
+    return (detail as ValidationIssue[])
+      .map((issue) => {
+        const field = issue.loc?.filter((p) => p !== 'body').join('.');
+        return field ? `${field}: ${issue.msg ?? 'invalid value'}` : issue.msg ?? 'invalid value';
+      })
+      .join('; ');
+  }
+  return '';
+}
+
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${API_URL}${path}`, {
     headers: { 'Content-Type': 'application/json' },
@@ -7,7 +26,7 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(err.detail || res.statusText);
+    throw new Error(formatDetail(err.detail) || res.statusText);
   }
   return res.json();
 }
@@ -211,6 +230,51 @@ export interface EquityCurvePoint {
   net_deposits_cumulative: number;
 }
 
+export interface DateRange {
+  start?: string;
+  end?: string;
+}
+
+export interface RangeRegenerateRequest {
+  start_date: string;
+  end_date: string;
+  target_net_pnl?: number;
+  trades_per_day?: number;
+  zero_activity_dates?: string[];
+  seed?: number;
+  regenerate_transactions?: boolean;
+  deposit_total?: number;
+  withdrawal_total?: number;
+  transaction_count?: number;
+}
+
+export interface RangeRegenerateResult {
+  start_date: string;
+  end_date: string;
+  deleted_trades: number;
+  generated_trades: number;
+  deleted_transactions: number;
+  generated_transactions: number;
+  net_pnl: number;
+  bots_regenerated: number;
+  bots_skipped_locked: number;
+  preserved_rows: number;
+  zero_activity_days: string[];
+}
+
+function qs(params: Record<string, string | number | undefined>): string {
+  const search = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== '') search.set(key, String(value));
+  }
+  const out = search.toString();
+  return out ? `?${out}` : '';
+}
+
+function rangeParams(range?: DateRange): Record<string, string | undefined> {
+  return { start_date: range?.start, end_date: range?.end };
+}
+
 export interface RecalculateResult {
   updated_trades: Trade[];
   updated_pnl_records: PnlRecord[];
@@ -253,7 +317,8 @@ export const api = {
     request<{ status: string }>(`/api/bots/${id}`, { method: 'DELETE' }),
 
   // Trades
-  listTrades: (botId: number) => request<Trade[]>(`/api/bots/${botId}/trades`),
+  listTrades: (botId: number, range?: DateRange) =>
+    request<Trade[]>(`/api/bots/${botId}/trades${qs(rangeParams(range))}`),
   createTrade: (botId: number, data: Omit<Trade, 'id' | 'bot_id' | 'pnl' | 'pnl_percent' | 'is_pinned' | 'created_at' | 'updated_at'>) =>
     request<Trade>(`/api/bots/${botId}/trades`, { method: 'POST', body: JSON.stringify(data) }),
   updateTrade: (id: number, data: Partial<Trade>) =>
@@ -262,8 +327,8 @@ export const api = {
     request<{ status: string }>(`/api/trades/${id}`, { method: 'DELETE' }),
 
   // PnL
-  getPnlRecords: (botId: number, period?: string) =>
-    request<PnlRecord[]>(`/api/bots/${botId}/pnl${period ? `?period=${period}` : ''}`),
+  getPnlRecords: (botId: number, period?: string, range?: DateRange) =>
+    request<PnlRecord[]>(`/api/bots/${botId}/pnl${qs({ period, ...rangeParams(range) })}`),
   updatePnlRecord: (id: number, data: Partial<PnlRecord>) =>
     request<PnlRecord>(`/api/pnl/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
 
@@ -272,28 +337,32 @@ export const api = {
     request<RecalculateResult>('/api/recalculate', { method: 'POST', body: JSON.stringify(data) }),
 
   // Stats
-  getPortfolioStats: (id: number) => request<Stats>(`/api/stats/portfolio/${id}`),
-  getAccountStats: (id: number) => request<Stats>(`/api/stats/account/${id}`),
-  getBotStats: (id: number) => request<Stats>(`/api/stats/bot/${id}`),
+  getPortfolioStats: (id: number, range?: DateRange) =>
+    request<Stats>(`/api/stats/portfolio/${id}${qs(rangeParams(range))}`),
+  getAccountStats: (id: number, range?: DateRange) =>
+    request<Stats>(`/api/stats/account/${id}${qs(rangeParams(range))}`),
+  getBotStats: (id: number, range?: DateRange) =>
+    request<Stats>(`/api/stats/bot/${id}${qs(rangeParams(range))}`),
 
   // Market Data
   listExchanges: () => request<{ exchanges: { id: string; name: string; type: string }[] }>('/api/market-data/exchanges'),
   listSymbols: (exchange: string) => request<{ exchange: string; symbols: string[] }>(`/api/market-data/symbols/${exchange}`),
   importMarketData: (data: MarketDataImportRequest) =>
     request<{ imported: number; exchange: string; symbol?: string; symbols?: string[]; per_symbol?: Record<string, number> }>('/api/market-data/import', { method: 'POST', body: JSON.stringify(data) }),
-  getSymbolPnl: (botId: number) => request<SymbolPnl[]>(`/api/bots/${botId}/symbol-pnl`),
+  getSymbolPnl: (botId: number, range?: DateRange) =>
+    request<SymbolPnl[]>(`/api/bots/${botId}/symbol-pnl${qs(rangeParams(range))}`),
 
   // Trade Generation
   generateTrades: (botId: number, data: TradeGenerateRequest) =>
     request<{ generated: number; bot_id: number }>(`/api/bots/${botId}/trades/generate`, { method: 'POST', body: JSON.stringify(data) }),
 
   // Period P&L
-  getBotPeriodPnl: (botId: number, periodType?: string) =>
-    request<PeriodPnl[]>(`/api/bots/${botId}/period-pnl${periodType ? `?period_type=${periodType}` : ''}`),
-  getAccountPeriodPnl: (accountId: number, periodType?: string) =>
-    request<PeriodPnl[]>(`/api/accounts/${accountId}/period-pnl${periodType ? `?period_type=${periodType}` : ''}`),
-  getPortfolioPeriodPnl: (portfolioId: number, periodType?: string) =>
-    request<PeriodPnl[]>(`/api/portfolios/${portfolioId}/period-pnl${periodType ? `?period_type=${periodType}` : ''}`),
+  getBotPeriodPnl: (botId: number, periodType?: string, range?: DateRange) =>
+    request<PeriodPnl[]>(`/api/bots/${botId}/period-pnl${qs({ period_type: periodType, ...rangeParams(range) })}`),
+  getAccountPeriodPnl: (accountId: number, periodType?: string, range?: DateRange) =>
+    request<PeriodPnl[]>(`/api/accounts/${accountId}/period-pnl${qs({ period_type: periodType, ...rangeParams(range) })}`),
+  getPortfolioPeriodPnl: (portfolioId: number, periodType?: string, range?: DateRange) =>
+    request<PeriodPnl[]>(`/api/portfolios/${portfolioId}/period-pnl${qs({ period_type: periodType, ...rangeParams(range) })}`),
   updatePeriodPnl: (botId: number, periodKey: string, data: { pnl?: number; win_rate?: number; profit_factor?: number; is_pinned?: boolean }, periodType?: string) =>
     request<{ periods: PeriodPnl[]; bot_stats: Record<string, number> }>(
       `/api/bots/${botId}/period-pnl/${periodKey}${periodType ? `?period_type=${periodType}` : ''}`,
@@ -334,17 +403,25 @@ export const api = {
       `/api/portfolios/${portfolioId}/regenerate`, { method: 'POST', body: JSON.stringify(data || {}) }
     ),
 
+  // Range-scoped regeneration (only touches data inside the window)
+  regenerateBotRange: (botId: number, data: RangeRegenerateRequest) =>
+    request<RangeRegenerateResult>(`/api/bots/${botId}/regenerate-range`, { method: 'POST', body: JSON.stringify(data) }),
+  regenerateAccountRange: (accountId: number, data: RangeRegenerateRequest) =>
+    request<RangeRegenerateResult>(`/api/accounts/${accountId}/regenerate-range`, { method: 'POST', body: JSON.stringify(data) }),
+  regeneratePortfolioRange: (portfolioId: number, data: RangeRegenerateRequest) =>
+    request<RangeRegenerateResult>(`/api/portfolios/${portfolioId}/regenerate-range`, { method: 'POST', body: JSON.stringify(data) }),
+
   // Equity Curve
-  getAccountEquityCurve: (accountId: number) =>
-    request<EquityCurvePoint[]>(`/api/accounts/${accountId}/equity-curve`),
-  getPortfolioEquityCurve: (portfolioId: number) =>
-    request<EquityCurvePoint[]>(`/api/portfolios/${portfolioId}/equity-curve`),
+  getAccountEquityCurve: (accountId: number, range?: DateRange) =>
+    request<EquityCurvePoint[]>(`/api/accounts/${accountId}/equity-curve${qs(rangeParams(range))}`),
+  getPortfolioEquityCurve: (portfolioId: number, range?: DateRange) =>
+    request<EquityCurvePoint[]>(`/api/portfolios/${portfolioId}/equity-curve${qs(rangeParams(range))}`),
 
   // Transactions
-  listTransactions: (accountId: number) =>
-    request<Transaction[]>(`/api/accounts/${accountId}/transactions`),
-  listPortfolioTransactions: (portfolioId: number) =>
-    request<Transaction[]>(`/api/portfolios/${portfolioId}/transactions`),
+  listTransactions: (accountId: number, range?: DateRange) =>
+    request<Transaction[]>(`/api/accounts/${accountId}/transactions${qs(rangeParams(range))}`),
+  listPortfolioTransactions: (portfolioId: number, range?: DateRange) =>
+    request<Transaction[]>(`/api/portfolios/${portfolioId}/transactions${qs(rangeParams(range))}`),
   createTransaction: (accountId: number, data: { type: string; amount: number; note?: string; date: string }) =>
     request<Transaction>(`/api/accounts/${accountId}/transactions`, { method: 'POST', body: JSON.stringify(data) }),
   updateTransaction: (txId: number, data: Partial<Transaction>) =>

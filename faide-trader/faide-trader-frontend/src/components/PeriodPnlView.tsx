@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { api, type PeriodPnl } from '@/lib/api';
+import { api, type DateRange, type PeriodPnl } from '@/lib/api';
 import { EditableField } from '@/components/EditableField';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 import { TrendingDown, Lock, Unlock } from 'lucide-react';
@@ -7,6 +7,7 @@ import { TrendingDown, Lock, Unlock } from 'lucide-react';
 interface PeriodPnlViewProps {
   entityType: 'bot' | 'account' | 'portfolio';
   entityId: number;
+  range?: DateRange;
   onRecalculated?: () => void;
 }
 
@@ -20,21 +21,24 @@ function formatNum(n: number, decimals = 2): string {
   return n.toLocaleString(undefined, { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
 }
 
-export function PeriodPnlView({ entityType, entityId, onRecalculated }: PeriodPnlViewProps) {
+export function PeriodPnlView({ entityType, entityId, range, onRecalculated }: PeriodPnlViewProps) {
+  const startDate = range?.start;
+  const endDate = range?.end;
   const [periodType, setPeriodType] = useState('monthly');
   const [periods, setPeriods] = useState<PeriodPnl[]>([]);
   const [loading, setLoading] = useState(false);
 
   const loadPeriods = useCallback(async () => {
     setLoading(true);
+    const selected = { start: startDate, end: endDate };
     try {
       let data: PeriodPnl[];
       if (entityType === 'bot') {
-        data = await api.getBotPeriodPnl(entityId, periodType);
+        data = await api.getBotPeriodPnl(entityId, periodType, selected);
       } else if (entityType === 'account') {
-        data = await api.getAccountPeriodPnl(entityId, periodType);
+        data = await api.getAccountPeriodPnl(entityId, periodType, selected);
       } else {
-        data = await api.getPortfolioPeriodPnl(entityId, periodType);
+        data = await api.getPortfolioPeriodPnl(entityId, periodType, selected);
       }
       setPeriods(data);
     } catch (e) {
@@ -42,7 +46,7 @@ export function PeriodPnlView({ entityType, entityId, onRecalculated }: PeriodPn
     } finally {
       setLoading(false);
     }
-  }, [entityType, entityId, periodType]);
+  }, [entityType, entityId, periodType, startDate, endDate]);
 
   useEffect(() => {
     loadPeriods();
