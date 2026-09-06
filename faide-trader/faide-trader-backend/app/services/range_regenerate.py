@@ -194,6 +194,55 @@ async def _reference_price(db: AsyncSession, bot: Bot, symbol: str, when: dateti
     return FALLBACK_PRICES.get(symbol.split("/")[0].upper(), 1000.0)
 
 
+@dataclass
+class ActivityProfile:
+    """How busy and how large a bot's trades typically are."""
+
+    trades_per_day: Optional[float]
+    magnitude: Optional[float]
+
+
+def _as_datetime(value: object) -> Optional[datetime]:
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, str):
+        try:
+            return datetime.fromisoformat(value)
+        except ValueError:
+            return None
+    return None
+
+
+async def _history_profile(
+    db: AsyncSession, bot: Bot, start: datetime, end: datetime
+) -> ActivityProfile:
+    """Derive a bot's usual trade rate and P&L size from its history outside the window.
+
+    Without this, regenerated periods look flat next to real history: the
+    strategy defaults are far sparser than most bots actually trade, and P&L
+    magnitudes would only be derived from the requested target.
+    """
+    activity = func.coalesce(Trade.exit_time, Trade.entry_time)
+    count, first, last, avg_abs = (
+        await db.execute(
+            select(
+                func.count(Trade.id),
+                func.min(activity),
+                func.max(activity),
+                func.avg(func.abs(Trade.pnl)),
+            ).where(Trade.bot_id == bot.id, or_(activity < start, activity > end))
+        )
+    ).one()
+
+    first_dt, last_dt = _as_datetime(first), _as_datetime(last)
+    if not count or count < 5 or first_dt is None or last_dt is None:
+        return ActivityProfile(None, None)
+
+    span_days = max((last_dt - first_dt).total_seconds() / 86400, 1.0)
+    magnitude = float(avg_abs) if avg_abs else None
+    return ActivityProfile(count / span_days, magnitude)
+
+
 def _active_days(start: datetime, end: datetime, zero_days: set[date]) -> list[date]:
     days = []
     cursor = start.date()
@@ -206,16 +255,21 @@ def _active_days(start: datetime, end: datetime, zero_days: set[date]) -> list[d
 
 def _build_trades(
     bot: Bot,
-    target_pnl: float,
+    target_pnl: Optional[float],
     active_days: list[date],
     start: datetime,
     end: datetime,
     trades_per_day: Optional[float],
+    profile: ActivityProfile,
     prices: dict[str, float],
     rng: random.Random,
 ) -> list[Trade]:
     strategy = bot.strategy_type or "grid"
-    per_day = trades_per_day if trades_per_day else STRATEGY_TRADES_PER_DAY.get(strategy, 1.0)
+    per_day = (
+        trades_per_day
+        or profile.trades_per_day
+        or STRATEGY_TRADES_PER_DAY.get(strategy, 1.0)
+    )
     win_rate = STRATEGY_WIN_RATE.get(strategy, 0.5) + rng.uniform(-0.08, 0.08)
 
     num_trades = max(1, int(round(len(active_days) * per_day * rng.uniform(0.7, 1.2))))
@@ -223,7 +277,10 @@ def _build_trades(
     win_flags = [True] * num_wins + [False] * (num_trades - num_wins)
     rng.shuffle(win_flags)
 
-    avg_magnitude = max(abs(target_pnl) / num_trades * 3, 1.0)
+    # The bot's own history sets the P&L scale; the target only shifts it.
+    avg_magnitude = profile.magnitude or max(
+        abs(target_pnl or 0.0) / num_trades * 3, 1.0
+    )
     symbols = list(prices.keys())
     active_day_set = set(active_days)
 
@@ -276,9 +333,14 @@ def _build_trades(
             )
         )
 
-    if trades:
-        drift = target_pnl - sum(t.pnl for t in trades)
-        trades[-1].pnl = round(trades[-1].pnl + drift, 2)
+    if trades and target_pnl is not None:
+        # Spread the correction over every trade so no single outlier absorbs it.
+        share = (target_pnl - sum(t.pnl for t in trades)) / len(trades)
+        for t in trades:
+            t.pnl = round(t.pnl + share, 2)
+        trades[-1].pnl = round(
+            trades[-1].pnl + (target_pnl - sum(t.pnl for t in trades)), 2
+        )
 
     for t in trades:
         _apply_exit_price(t)
@@ -578,7 +640,7 @@ async def regenerate_range(
     targets = (
         _distribute_targets(open_bots, target_total, rng)
         if opts.target_net_pnl is not None
-        else {b.id: rng.uniform(-40, 60) for b in open_bots}
+        else {}
     )
 
     generated = 0
@@ -588,11 +650,12 @@ async def regenerate_range(
         prices = {s: await _reference_price(db, bot, s, start) for s in symbols}
         new_trades = _build_trades(
             bot=bot,
-            target_pnl=targets[bot.id],
+            target_pnl=targets.get(bot.id),
             active_days=active_days,
             start=start,
             end=end,
             trades_per_day=opts.trades_per_day,
+            profile=await _history_profile(db, bot, start, end),
             prices=prices,
             rng=rng,
         )
