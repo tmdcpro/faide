@@ -6,6 +6,7 @@ Supports both top-down (totals -> trades) and bottom-up (trades -> totals).
 """
 import math
 import random
+import statistics
 from datetime import datetime, timedelta
 from typing import Optional
 
@@ -40,11 +41,130 @@ def calculate_trade_pnl(
     return round(net_pnl, 4), round(pnl_percent, 4)
 
 
-def calculate_stats_from_trades(trades: list[Trade], initial_balance: float = 10000.0) -> dict:
-    """Calculate all statistics from a list of trades."""
+MIN_DRAWDOWN_AMOUNT = 100.0
+"""Drawdowns smaller than this are ignored when picking the worst one by percent.
+
+At low equity a $20 dip is a huge percentage and would always win the ranking.
+"""
+
+OUTLIER_MAD_MULTIPLE = 40.0
+"""How far from the median |P&L| a trade may sit before it is treated as an outlier.
+
+Distances are measured in robust standard deviations (median absolute deviation
+scaled by 1.4826), so the test adapts to whatever the account normally trades.
+The multiple is deliberately far out in the tail: it is meant to catch P&L that a
+top-down balance edit imposed on a single trade, not merely a very good day. Such
+trades are only skipped when ranking the best/worst trade -- their P&L still
+counts in every total.
+"""
+
+OUTLIER_MIN_TRADES = 20
+"""Below this many trades the spread is too noisy to call anything an outlier."""
+
+
+def trade_time(trade: Trade) -> datetime:
+    """When a trade's P&L is realised."""
+    return trade.exit_time or trade.entry_time
+
+
+def _outlier_pnl_threshold(pnls: list[float]) -> float:
+    """|P&L| above which a trade is an outlier for best/worst ranking.
+
+    Returns infinity when there is too little data, or when the spread is zero, to
+    keep every trade eligible.
+    """
+    if len(pnls) < OUTLIER_MIN_TRADES:
+        return float("inf")
+    magnitudes = [abs(p) for p in pnls]
+    median = statistics.median(magnitudes)
+    mad = statistics.median([abs(m - median) for m in magnitudes])
+    if mad <= 0:
+        return float("inf")
+    return median + OUTLIER_MAD_MULTIPLE * mad * 1.4826
+
+
+def _worst_drawdown(
+    series: list[tuple[datetime, float]],
+    initial_balance: float,
+    min_amount: float,
+) -> dict:
+    """Find the deepest drawdown by percent, ignoring ones below `min_amount`.
+
+    `series` is (timestamp, equity) in chronological order. Returns the amount and
+    percent of the same trough so the dollar figure always explains the percent.
+    """
+    peak = initial_balance
+    best = {"amount": 0.0, "percent": 0.0, "date": None, "peak": initial_balance}
+    fallback = dict(best)
+
+    for ts, equity in series:
+        peak = max(peak, equity)
+        amount = peak - equity
+        if amount <= 0 or peak <= 0:
+            continue
+        percent = amount / peak * 100
+        point = {
+            "amount": round(amount, 2),
+            "percent": round(percent, 2),
+            "date": ts.strftime("%Y-%m-%d") if hasattr(ts, "strftime") else str(ts)[:10],
+            "peak": round(peak, 2),
+        }
+        if amount >= min_amount:
+            if percent > best["percent"]:
+                best = point
+        elif amount > fallback["amount"]:
+            fallback = point
+
+    return best if best["amount"] > 0 else fallback
+
+
+def _period_extremes(trades: list[Trade], key: str) -> dict:
+    """Best and worst calendar day or ISO week by net P&L."""
+    buckets: dict[str, float] = {}
+    for t in trades:
+        ts = trade_time(t)
+        if key == "day":
+            label = ts.strftime("%Y-%m-%d")
+        else:
+            iso = ts.isocalendar()
+            label = f"{iso[0]}-W{iso[1]:02d}"
+        buckets[label] = buckets.get(label, 0.0) + t.pnl
+
+    if not buckets:
+        return {"best": 0.0, "best_label": None, "worst": 0.0, "worst_label": None}
+
+    best_label = max(buckets, key=lambda k: buckets[k])
+    worst_label = min(buckets, key=lambda k: buckets[k])
+    return {
+        "best": round(buckets[best_label], 2),
+        "best_label": best_label,
+        "worst": round(buckets[worst_label], 2),
+        "worst_label": worst_label,
+    }
+
+
+def calculate_stats_from_trades(
+    trades: list[Trade],
+    initial_balance: float = 10000.0,
+    transactions: Optional[list[Transaction]] = None,
+    min_drawdown_amount: float = MIN_DRAWDOWN_AMOUNT,
+) -> dict:
+    """Calculate all statistics from a list of trades.
+
+    Trades are ordered by realisation time here rather than by the caller's
+    grouping, so drawdown always follows the real equity path. Drawdown is
+    reported twice: on trading equity alone, and on equity that also moves with
+    deposits and withdrawals.
+    """
+    transactions = transactions or []
+    total_deposits = sum(tx.amount for tx in transactions if tx.type == "deposit")
+    total_withdrawals = sum(tx.amount for tx in transactions if tx.type != "deposit")
+    net_flows = total_deposits - total_withdrawals
+
     if not trades:
         return {
             "total_pnl": 0.0,
+            "gross_pnl": 0.0,
             "total_trades": 0,
             "win_count": 0,
             "loss_count": 0,
@@ -56,16 +176,39 @@ def calculate_stats_from_trades(trades: list[Trade], initial_balance: float = 10
             "sortino_ratio": 0.0,
             "max_drawdown": 0.0,
             "max_drawdown_percent": 0.0,
+            "max_drawdown_date": None,
+            "max_drawdown_flows": 0.0,
+            "max_drawdown_flows_percent": 0.0,
+            "max_drawdown_flows_date": None,
             "calmar_ratio": 0.0,
             "avg_trade_pnl": 0.0,
             "best_trade": 0.0,
             "worst_trade": 0.0,
+            "best_trade_raw": 0.0,
+            "worst_trade_raw": 0.0,
+            "outlier_trade_count": 0,
+            "best_day_pnl": 0.0,
+            "best_day": None,
+            "worst_day_pnl": 0.0,
+            "worst_day": None,
+            "best_week_pnl": 0.0,
+            "best_week": None,
+            "worst_week_pnl": 0.0,
+            "worst_week": None,
             "total_fees": 0.0,
             "net_pnl": 0.0,
-            "current_balance": initial_balance,
+            "gross_pnl_with_flows": round(net_flows, 2),
+            "net_pnl_with_flows": round(net_flows, 2),
+            "total_deposits": round(total_deposits, 2),
+            "total_withdrawals": round(total_withdrawals, 2),
+            "net_flows": round(net_flows, 2),
+            "trading_balance": round(initial_balance, 2),
+            "current_balance": round(initial_balance + net_flows, 2),
             "roi_percent": 0.0,
+            "roi_on_initial_percent": 0.0,
         }
 
+    trades = sorted(trades, key=trade_time)
     pnls = [t.pnl for t in trades]
     fees = [t.fee for t in trades]
     wins = [p for p in pnls if p > 0]
@@ -84,10 +227,17 @@ def calculate_stats_from_trades(trades: list[Trade], initial_balance: float = 10
     gross_loss = abs(sum(losses)) if losses else 0.0
     profit_factor = (gross_profit / gross_loss) if gross_loss > 0 else float("inf") if gross_profit > 0 else 0.0
     avg_trade_pnl = net_pnl / total_trades if total_trades > 0 else 0.0
-    best_trade = max(pnls) if pnls else 0.0
-    worst_trade = min(pnls) if pnls else 0.0
-    current_balance = initial_balance + net_pnl
-    roi_percent = (net_pnl / initial_balance * 100) if initial_balance > 0 else 0.0
+
+    outlier_threshold = _outlier_pnl_threshold(pnls)
+    clean_pnls = [p for p in pnls if abs(p) <= outlier_threshold] or pnls
+    best_trade = max(clean_pnls)
+    worst_trade = min(clean_pnls)
+
+    trading_balance = initial_balance + net_pnl
+    current_balance = trading_balance + net_flows
+    capital_deployed = initial_balance + max(net_flows, 0.0)
+    roi_percent = (net_pnl / capital_deployed * 100) if capital_deployed > 0 else 0.0
+    roi_on_initial = (net_pnl / initial_balance * 100) if initial_balance > 0 else 0.0
 
     # Sharpe ratio (annualized, assuming daily returns)
     if len(pnls) > 1:
@@ -107,15 +257,32 @@ def calculate_stats_from_trades(trades: list[Trade], initial_balance: float = 10
         sharpe_ratio = 0.0
         sortino_ratio = 0.0
 
-    # Max drawdown
-    equity_curve = [initial_balance]
-    for pnl in pnls:
-        equity_curve.append(equity_curve[-1] + pnl)
-    equity_arr = np.array(equity_curve)
-    peak = np.maximum.accumulate(equity_arr)
-    drawdown = equity_arr - peak
-    max_drawdown = abs(float(np.min(drawdown)))
-    max_drawdown_percent = (max_drawdown / float(np.max(peak)) * 100) if np.max(peak) > 0 else 0.0
+    # Max drawdown, measured trade by trade along the real chronological path.
+    trading_series: list[tuple[datetime, float]] = []
+    equity = initial_balance
+    for t in trades:
+        equity += t.pnl
+        trading_series.append((trade_time(t), equity))
+
+    events: list[tuple[datetime, float]] = [(trade_time(t), t.pnl) for t in trades]
+    events += [
+        (tx.date, tx.amount if tx.type == "deposit" else -tx.amount)
+        for tx in transactions
+    ]
+    events.sort(key=lambda e: e[0])
+    flow_series: list[tuple[datetime, float]] = []
+    equity = initial_balance
+    for ts, delta in events:
+        equity += delta
+        flow_series.append((ts, equity))
+
+    dd = _worst_drawdown(trading_series, initial_balance, min_drawdown_amount)
+    dd_flows = _worst_drawdown(flow_series, initial_balance, min_drawdown_amount)
+    max_drawdown = dd["amount"]
+    max_drawdown_percent = dd["percent"]
+
+    days = _period_extremes(trades, "day")
+    weeks = _period_extremes(trades, "week")
 
     # Calmar ratio
     annual_return = net_pnl / initial_balance if initial_balance > 0 else 0.0
@@ -127,6 +294,7 @@ def calculate_stats_from_trades(trades: list[Trade], initial_balance: float = 10
 
     return {
         "total_pnl": round(total_pnl, 2),
+        "gross_pnl": round(total_pnl, 2),
         "total_trades": total_trades,
         "win_count": win_count,
         "loss_count": loss_count,
@@ -136,16 +304,38 @@ def calculate_stats_from_trades(trades: list[Trade], initial_balance: float = 10
         "profit_factor": round(profit_factor, 2),
         "sharpe_ratio": round(sharpe_ratio, 4),
         "sortino_ratio": round(sortino_ratio, 4),
-        "max_drawdown": round(max_drawdown, 2),
-        "max_drawdown_percent": round(max_drawdown_percent, 2),
+        "max_drawdown": max_drawdown,
+        "max_drawdown_percent": max_drawdown_percent,
+        "max_drawdown_date": dd["date"],
+        "max_drawdown_flows": dd_flows["amount"],
+        "max_drawdown_flows_percent": dd_flows["percent"],
+        "max_drawdown_flows_date": dd_flows["date"],
         "calmar_ratio": round(calmar_ratio, 4),
         "avg_trade_pnl": round(avg_trade_pnl, 2),
         "best_trade": round(best_trade, 2),
         "worst_trade": round(worst_trade, 2),
+        "best_trade_raw": round(max(pnls), 2),
+        "worst_trade_raw": round(min(pnls), 2),
+        "outlier_trade_count": total_trades - len(clean_pnls),
+        "best_day_pnl": days["best"],
+        "best_day": days["best_label"],
+        "worst_day_pnl": days["worst"],
+        "worst_day": days["worst_label"],
+        "best_week_pnl": weeks["best"],
+        "best_week": weeks["best_label"],
+        "worst_week_pnl": weeks["worst"],
+        "worst_week": weeks["worst_label"],
         "total_fees": round(total_fees, 2),
         "net_pnl": round(net_pnl, 2),
+        "gross_pnl_with_flows": round(total_pnl + net_flows, 2),
+        "net_pnl_with_flows": round(net_pnl + net_flows, 2),
+        "total_deposits": round(total_deposits, 2),
+        "total_withdrawals": round(total_withdrawals, 2),
+        "net_flows": round(net_flows, 2),
+        "trading_balance": round(trading_balance, 2),
         "current_balance": round(current_balance, 2),
         "roi_percent": round(roi_percent, 2),
+        "roi_on_initial_percent": round(roi_on_initial, 2),
     }
 
 

@@ -121,6 +121,7 @@ export interface PnlRecord {
 
 export interface Stats {
   total_pnl: number;
+  gross_pnl: number;
   total_trades: number;
   win_count: number;
   loss_count: number;
@@ -132,14 +133,36 @@ export interface Stats {
   sortino_ratio: number;
   max_drawdown: number;
   max_drawdown_percent: number;
+  max_drawdown_date: string | null;
+  max_drawdown_flows: number;
+  max_drawdown_flows_percent: number;
+  max_drawdown_flows_date: string | null;
   calmar_ratio: number;
   avg_trade_pnl: number;
   best_trade: number;
   worst_trade: number;
+  best_trade_raw: number;
+  worst_trade_raw: number;
+  outlier_trade_count: number;
+  best_day_pnl: number;
+  best_day: string | null;
+  worst_day_pnl: number;
+  worst_day: string | null;
+  best_week_pnl: number;
+  best_week: string | null;
+  worst_week_pnl: number;
+  worst_week: string | null;
   total_fees: number;
   net_pnl: number;
+  gross_pnl_with_flows: number;
+  net_pnl_with_flows: number;
+  total_deposits: number;
+  total_withdrawals: number;
+  net_flows: number;
+  trading_balance: number;
   current_balance: number;
   roi_percent: number;
+  roi_on_initial_percent: number;
 }
 
 export interface PeriodPnl {

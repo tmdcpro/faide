@@ -18,21 +18,25 @@ export function StatsCard({ stats, title }: StatsCardProps) {
     <div className="bg-slate-800 rounded-lg border border-slate-700 p-4">
       {title && <h3 className="text-sm font-medium text-gray-400 mb-3">{title}</h3>}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
-        <StatItem label="Total P&L" value={`$${formatNum(stats.total_pnl)}`} color={pnlColor(stats.total_pnl)} />
+        <StatItem label="Gross P&L" value={`$${formatNum(stats.total_pnl)}`} color={pnlColor(stats.total_pnl)} />
         <StatItem label="ROI" value={`${formatNum(stats.roi_percent)}%`} color={pnlColor(stats.roi_percent)} />
         <StatItem label="Win Rate" value={`${formatNum(stats.win_rate)}%`} color={stats.win_rate >= 50 ? 'text-green-400' : 'text-red-400'} />
         <StatItem label="Trades" value={`${stats.total_trades}`} />
         <StatItem label="W/L" value={`${stats.win_count}/${stats.loss_count}`} />
         <StatItem label="Sharpe" value={formatNum(stats.sharpe_ratio, 4)} color={stats.sharpe_ratio > 1 ? 'text-green-400' : stats.sharpe_ratio > 0 ? 'text-yellow-400' : 'text-red-400'} />
         <StatItem label="Sortino" value={formatNum(stats.sortino_ratio, 4)} />
-        <StatItem label="Max DD" value={`$${formatNum(stats.max_drawdown)}`} color="text-red-400" />
-        <StatItem label="Max DD %" value={`${formatNum(stats.max_drawdown_percent)}%`} color="text-red-400" />
+        <StatItem label="Max DD % (trading)" value={`${formatNum(stats.max_drawdown_percent)}% ($${formatNum(stats.max_drawdown)})`} color="text-red-400" />
+        <StatItem label="Max DD % (w/ flows)" value={`${formatNum(stats.max_drawdown_flows_percent)}% ($${formatNum(stats.max_drawdown_flows)})`} color="text-red-400" />
         <StatItem label="Profit Factor" value={formatNum(stats.profit_factor)} color={stats.profit_factor > 1 ? 'text-green-400' : 'text-red-400'} />
         <StatItem label="Avg Win" value={`$${formatNum(stats.avg_win)}`} color="text-green-400" />
         <StatItem label="Avg Loss" value={`$${formatNum(stats.avg_loss)}`} color="text-red-400" />
         <StatItem label="Best Trade" value={`$${formatNum(stats.best_trade)}`} color="text-green-400" />
         <StatItem label="Worst Trade" value={`$${formatNum(stats.worst_trade)}`} color="text-red-400" />
+        <StatItem label="Net P&L" value={`$${formatNum(stats.net_pnl)}`} color={pnlColor(stats.net_pnl)} />
+        <StatItem label="Best/Worst Day" value={`$${formatNum(stats.best_day_pnl)} / $${formatNum(stats.worst_day_pnl)}`} />
+        <StatItem label="Best/Worst Week" value={`$${formatNum(stats.best_week_pnl)} / $${formatNum(stats.worst_week_pnl)}`} />
         <StatItem label="Balance" value={`$${formatNum(stats.current_balance)}`} />
+        <StatItem label="Balance (trading)" value={`$${formatNum(stats.trading_balance)}`} />
       </div>
     </div>
   );

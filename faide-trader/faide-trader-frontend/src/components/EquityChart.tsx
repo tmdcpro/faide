@@ -18,6 +18,9 @@ import {
   EyeOff,
 } from 'lucide-react';
 
+/** Matches MIN_DRAWDOWN_AMOUNT in the backend calculation engine. */
+const MIN_DRAWDOWN_AMOUNT = 100;
+
 interface EquityChartProps {
   entityType: 'account' | 'portfolio';
   entityId: number;
@@ -199,8 +202,14 @@ export function EquityChart({ entityType, entityId, range }: EquityChartProps) {
   // Compute summary stats
   const lastPoint = data[data.length - 1];
   const firstPoint = data[0];
-  const maxDrawdown = Math.max(...data.map((d) => d.drawdown));
-  const maxDrawdownPct = Math.max(...data.map((d) => d.drawdown_percent));
+  // Deepest drawdown by percent, ignoring dips under $100 so a tiny early dip at
+  // low equity can't win on percentage. Amount and percent come from that same day.
+  const drawdownCandidates = data.filter((d) => d.drawdown >= MIN_DRAWDOWN_AMOUNT);
+  const worstDrawdownDay = (drawdownCandidates.length ? drawdownCandidates : data).reduce(
+    (worst, d) => (d.drawdown_percent > worst.drawdown_percent ? d : worst),
+  );
+  const maxDrawdown = worstDrawdownDay.drawdown;
+  const maxDrawdownPct = worstDrawdownDay.drawdown_percent;
   const totalDeposits = data.reduce((sum, d) => sum + d.deposits, 0);
   const totalWithdrawals = data.reduce((sum, d) => sum + d.withdrawals, 0);
   const depositDays = data.filter((d) => d.deposits > 0);
@@ -226,7 +235,7 @@ export function EquityChart({ entityType, entityId, range }: EquityChartProps) {
             </span>
           </div>
           <div className="text-gray-400">
-            Max DD: <span className="text-red-400 font-mono">{formatCurrency(maxDrawdown)} ({maxDrawdownPct.toFixed(1)}%)</span>
+            Max DD: <span className="text-red-400 font-mono">{maxDrawdownPct.toFixed(1)}% ({formatCurrency(maxDrawdown)})</span>
           </div>
         </div>
       </div>
@@ -422,7 +431,7 @@ export function EquityChart({ entityType, entityId, range }: EquityChartProps) {
         <div className="bg-slate-700/50 rounded-lg p-2">
           <div className="text-gray-500 mb-0.5">Max Drawdown</div>
           <div className="text-red-400 font-mono font-medium">
-            {formatCurrency(maxDrawdown)} <span className="text-gray-500">({maxDrawdownPct.toFixed(1)}%)</span>
+            {maxDrawdownPct.toFixed(1)}% <span className="text-gray-500">({formatCurrency(maxDrawdown)} on {worstDrawdownDay.date})</span>
           </div>
         </div>
         <div className="bg-slate-700/50 rounded-lg p-2">

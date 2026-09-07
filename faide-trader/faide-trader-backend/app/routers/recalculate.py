@@ -633,10 +633,21 @@ async def get_portfolio_stats(
             )
             all_trades.extend(result.scalars().all())
 
+    tx_result = await db.execute(
+        select(Transaction)
+        .where(Transaction.account_id.in_([a.id for a in accounts]))
+        .order_by(Transaction.date)
+    )
+    transactions = list(tx_result.scalars().all())
+
     baseline = await balance_at(
         db, [a.id for a in accounts], total_initial if total_initial > 0 else 10000.0, start
     )
-    stats = calculate_stats_from_trades(filter_trades(all_trades, start, end), baseline)
+    stats = calculate_stats_from_trades(
+        filter_trades(all_trades, start, end),
+        baseline,
+        filter_transactions(transactions, start, end),
+    )
     return StatsResponse(**stats)
 
 
@@ -662,8 +673,19 @@ async def get_account_stats(
         )
         all_trades.extend(result.scalars().all())
 
+    tx_result = await db.execute(
+        select(Transaction)
+        .where(Transaction.account_id == account_id)
+        .order_by(Transaction.date)
+    )
+    transactions = list(tx_result.scalars().all())
+
     baseline = await balance_at(db, [account_id], account.initial_balance, start)
-    stats = calculate_stats_from_trades(filter_trades(all_trades, start, end), baseline)
+    stats = calculate_stats_from_trades(
+        filter_trades(all_trades, start, end),
+        baseline,
+        filter_transactions(transactions, start, end),
+    )
     return StatsResponse(**stats)
 
 

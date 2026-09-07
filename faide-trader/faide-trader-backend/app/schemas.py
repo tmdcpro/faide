@@ -390,6 +390,7 @@ class TransactionResponse(BaseModel):
 # --- Stats ---
 class StatsResponse(BaseModel):
     total_pnl: float = 0.0
+    gross_pnl: float = 0.0
     total_trades: int = 0
     win_count: int = 0
     loss_count: int = 0
@@ -401,14 +402,36 @@ class StatsResponse(BaseModel):
     sortino_ratio: float = 0.0
     max_drawdown: float = 0.0
     max_drawdown_percent: float = 0.0
+    max_drawdown_date: Optional[str] = None
+    max_drawdown_flows: float = 0.0
+    max_drawdown_flows_percent: float = 0.0
+    max_drawdown_flows_date: Optional[str] = None
     calmar_ratio: float = 0.0
     avg_trade_pnl: float = 0.0
     best_trade: float = 0.0
     worst_trade: float = 0.0
+    best_trade_raw: float = 0.0
+    worst_trade_raw: float = 0.0
+    outlier_trade_count: int = 0
+    best_day_pnl: float = 0.0
+    best_day: Optional[str] = None
+    worst_day_pnl: float = 0.0
+    worst_day: Optional[str] = None
+    best_week_pnl: float = 0.0
+    best_week: Optional[str] = None
+    worst_week_pnl: float = 0.0
+    worst_week: Optional[str] = None
     total_fees: float = 0.0
     net_pnl: float = 0.0
+    gross_pnl_with_flows: float = 0.0
+    net_pnl_with_flows: float = 0.0
+    total_deposits: float = 0.0
+    total_withdrawals: float = 0.0
+    net_flows: float = 0.0
+    trading_balance: float = 0.0
     current_balance: float = 0.0
     roi_percent: float = 0.0
+    roi_on_initial_percent: float = 0.0
 
 
 # --- Equity Curve ---
