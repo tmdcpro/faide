@@ -63,13 +63,23 @@ def test_chronological_drawdown() -> None:
     check("trading balance", s["trading_balance"], 1800.0)
 
 
-def test_percent_first_with_minimum() -> None:
+def test_percent_first_beats_larger_dollar_dip() -> None:
     """A shallower but larger dip must not beat a deeper percentage one."""
-    trades = [trade(0, -150.0), trade(1, 10_000.0), trade(2, -1000.0)]
-    s = calculate_stats_from_trades(trades, 1000.0, min_drawdown_amount=100.0)
-    # 15% off 1000 vs 10.09% off 9910 -- the $1000 dip is bigger in dollars.
-    check("percent-first dd percent", s["max_drawdown_percent"], 15.0)
-    check("percent-first dd amount", s["max_drawdown"], 150.0)
+    trades = [trade(0, -3000.0), trade(1, 10_000.0), trade(2, -4000.0)]
+    s = calculate_stats_from_trades(trades, 10_000.0)
+    # 30% off 10,000 vs 23.5% off 17,000 -- the $4,000 dip is bigger in dollars.
+    check("percent-first dd percent", s["max_drawdown_percent"], 30.0)
+    check("percent-first dd amount", s["max_drawdown"], 3000.0)
+
+
+def test_early_low_equity_dip_does_not_win() -> None:
+    """A dip that was only huge in percent because the account was tiny is skipped."""
+    trades = [trade(0, -700.0), trade(1, 70_000.0), trade(2, -20_000.0)]
+    s = calculate_stats_from_trades(trades, 2000.0)
+    # 35% off 2,000 is nominally deeper than 28.2% off 71,300, but $700 is under
+    # 2% of the 71,300 the account went on to reach.
+    check("low-equity dd amount", s["max_drawdown"], 20_000.0)
+    check("low-equity dd percent", s["max_drawdown_percent"], 28.05)
 
 
 def test_minimum_amount_filters_small_dips() -> None:
@@ -77,6 +87,13 @@ def test_minimum_amount_filters_small_dips() -> None:
     s = calculate_stats_from_trades(trades, 100.0, min_drawdown_amount=100.0)
     check("min-amount dd amount", s["max_drawdown"], 500.0)
     check("min-amount dd percent", s["max_drawdown_percent"], 9.9)
+
+
+def test_zero_initial_balance_does_not_divide_by_zero() -> None:
+    s = calculate_stats_from_trades([trade(0, 100.0), trade(1, -40.0)], 0.0)
+    check("zero-balance calmar", s["calmar_ratio"], 0.0)
+    check("zero-balance roi", s["roi_percent"], 0.0)
+    check("zero-balance net pnl", s["net_pnl"], 60.0)
 
 
 def test_minimum_amount_fallback() -> None:
@@ -90,7 +107,7 @@ def test_flows_change_only_the_flow_drawdown() -> None:
     trades = [trade(0, 500.0), trade(3, -200.0)]
     transactions = [tx(1, 1000.0, "deposit"), tx(2, 900.0, "withdrawal")]
     s = calculate_stats_from_trades(trades, 1000.0, transactions)
-    # Trading only: 1000, 1500, 1300 -> 200 off 1500.
+    # Trading only: 1000, 1500, 1300 -> 200 off 1500 (over 2% of the 1500 peak).
     check("trading dd amount", s["max_drawdown"], 200.0)
     check("trading dd percent", s["max_drawdown_percent"], 13.33)
     # With flows: 1500, 2500, 1600, 1400 -> 1100 off 2500.

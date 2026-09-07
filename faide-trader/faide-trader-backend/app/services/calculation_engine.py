@@ -47,6 +47,15 @@ MIN_DRAWDOWN_AMOUNT = 100.0
 At low equity a $20 dip is a huge percentage and would always win the ranking.
 """
 
+MIN_DRAWDOWN_PEAK_FRACTION = 0.02
+"""A drawdown must also be this large relative to the highest equity ever reached.
+
+A flat dollar floor is not enough on an account that grew by orders of magnitude:
+a $780 dip back when the account held $2k is 37%, and would outrank a $24k dip at
+$70k. Scaling the floor with peak equity keeps the ranking on drawdowns that still
+matter at the account's current size.
+"""
+
 OUTLIER_MAD_MULTIPLE = 40.0
 """How far from the median |P&L| a trade may sit before it is treated as an outlier.
 
@@ -92,10 +101,16 @@ def _worst_drawdown(
 
     `series` is (timestamp, equity) in chronological order. Returns the amount and
     percent of the same trough so the dollar figure always explains the percent.
+
+    `min_amount` is raised to `MIN_DRAWDOWN_PEAK_FRACTION` of the highest equity the
+    series reaches, so the ranking is not won by an early dip that was only large in
+    percentage terms because the account was tiny at the time.
     """
     peak = initial_balance
     best = {"amount": 0.0, "percent": 0.0, "date": None, "peak": initial_balance}
     fallback = dict(best)
+    high_water = max([equity for _, equity in series] + [initial_balance])
+    floor = max(min_amount, high_water * MIN_DRAWDOWN_PEAK_FRACTION)
 
     for ts, equity in series:
         peak = max(peak, equity)
@@ -109,7 +124,7 @@ def _worst_drawdown(
             "date": ts.strftime("%Y-%m-%d") if hasattr(ts, "strftime") else str(ts)[:10],
             "peak": round(peak, 2),
         }
-        if amount >= min_amount:
+        if amount >= floor:
             if percent > best["percent"]:
                 best = point
         elif amount > fallback["amount"]:
@@ -286,7 +301,11 @@ def calculate_stats_from_trades(
 
     # Calmar ratio
     annual_return = net_pnl / initial_balance if initial_balance > 0 else 0.0
-    calmar_ratio = (annual_return / (max_drawdown / initial_balance)) if max_drawdown > 0 else 0.0
+    calmar_ratio = (
+        annual_return / (max_drawdown / initial_balance)
+        if max_drawdown > 0 and initial_balance > 0
+        else 0.0
+    )
 
     # Cap infinite values
     if profit_factor == float("inf"):

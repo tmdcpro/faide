@@ -11,15 +11,12 @@ import {
   ResponsiveContainer,
   ReferenceDot,
 } from 'recharts';
-import { api, type DateRange, type EquityCurvePoint } from '@/lib/api';
+import { api, type DateRange, type EquityCurvePoint, type Stats } from '@/lib/api';
 import {
   TrendingUp,
   Eye,
   EyeOff,
 } from 'lucide-react';
-
-/** Matches MIN_DRAWDOWN_AMOUNT in the backend calculation engine. */
-const MIN_DRAWDOWN_AMOUNT = 100;
 
 interface EquityChartProps {
   entityType: 'account' | 'portfolio';
@@ -141,6 +138,7 @@ export function EquityChart({ entityType, entityId, range }: EquityChartProps) {
   const startDate = range?.start;
   const endDate = range?.end;
   const [data, setData] = useState<EquityCurvePoint[]>([]);
+  const [stats, setStats] = useState<Stats | null>(null);
   const [loading, setLoading] = useState(false);
   const [toggles, setToggles] = useState<ToggleState>({
     balance: true,
@@ -160,6 +158,13 @@ export function EquityChart({ entityType, entityId, range }: EquityChartProps) {
         ? await api.getAccountEquityCurve(entityId, selected)
         : await api.getPortfolioEquityCurve(entityId, selected);
       setData(curve);
+      // The headline drawdown comes from the stats endpoint so the chart and the
+      // statistics card can never disagree; the curve here is only daily, while the
+      // stats walk every trade.
+      const s = entityType === 'account'
+        ? await api.getAccountStats(entityId, selected)
+        : await api.getPortfolioStats(entityId, selected);
+      setStats(s);
     } catch (e) {
       console.error('Failed to load equity curve:', e);
     } finally {
@@ -202,14 +207,14 @@ export function EquityChart({ entityType, entityId, range }: EquityChartProps) {
   // Compute summary stats
   const lastPoint = data[data.length - 1];
   const firstPoint = data[0];
-  // Deepest drawdown by percent, ignoring dips under $100 so a tiny early dip at
-  // low equity can't win on percentage. Amount and percent come from that same day.
-  const drawdownCandidates = data.filter((d) => d.drawdown >= MIN_DRAWDOWN_AMOUNT);
-  const worstDrawdownDay = (drawdownCandidates.length ? drawdownCandidates : data).reduce(
+  // This curve moves with deposits and withdrawals, so pair it with the drawdown
+  // measured the same way. Fall back to the daily points if stats are unavailable.
+  const worstDrawdownDay = data.reduce(
     (worst, d) => (d.drawdown_percent > worst.drawdown_percent ? d : worst),
   );
-  const maxDrawdown = worstDrawdownDay.drawdown;
-  const maxDrawdownPct = worstDrawdownDay.drawdown_percent;
+  const maxDrawdown = stats ? stats.max_drawdown_flows : worstDrawdownDay.drawdown;
+  const maxDrawdownPct = stats ? stats.max_drawdown_flows_percent : worstDrawdownDay.drawdown_percent;
+  const maxDrawdownDate = stats?.max_drawdown_flows_date ?? worstDrawdownDay.date;
   const totalDeposits = data.reduce((sum, d) => sum + d.deposits, 0);
   const totalWithdrawals = data.reduce((sum, d) => sum + d.withdrawals, 0);
   const depositDays = data.filter((d) => d.deposits > 0);
@@ -234,7 +239,7 @@ export function EquityChart({ entityType, entityId, range }: EquityChartProps) {
               {formatCurrency(lastPoint.cumulative_pnl)}
             </span>
           </div>
-          <div className="text-gray-400">
+          <div className="text-gray-400" title="Deepest drawdown per trade, with deposits and withdrawals included">
             Max DD: <span className="text-red-400 font-mono">{maxDrawdownPct.toFixed(1)}% ({formatCurrency(maxDrawdown)})</span>
           </div>
         </div>
@@ -429,9 +434,9 @@ export function EquityChart({ entityType, entityId, range }: EquityChartProps) {
           </div>
         </div>
         <div className="bg-slate-700/50 rounded-lg p-2">
-          <div className="text-gray-500 mb-0.5">Max Drawdown</div>
+          <div className="text-gray-500 mb-0.5">Max Drawdown (w/ flows)</div>
           <div className="text-red-400 font-mono font-medium">
-            {maxDrawdownPct.toFixed(1)}% <span className="text-gray-500">({formatCurrency(maxDrawdown)} on {worstDrawdownDay.date})</span>
+            {maxDrawdownPct.toFixed(1)}% <span className="text-gray-500">({formatCurrency(maxDrawdown)} on {maxDrawdownDate})</span>
           </div>
         </div>
         <div className="bg-slate-700/50 rounded-lg p-2">

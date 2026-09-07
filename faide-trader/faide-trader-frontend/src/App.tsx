@@ -72,6 +72,8 @@ function App() {
   const [currentAccount, setCurrentAccount] = useState<Account | null>(null);
   const [currentBot, setCurrentBot] = useState<Bot | null>(null);
 
+  const [loadError, setLoadError] = useState<string | null>(null);
+
   const rangeInvalid = Boolean(
     range.start && range.end && new Date(range.start) > new Date(range.end)
   );
@@ -85,6 +87,7 @@ function App() {
       return;
     }
     setLoading(true);
+    setLoadError(null);
     try {
       if (view.type === 'portfolios') {
         const data = await api.listPortfolios();
@@ -125,6 +128,11 @@ function App() {
       }
     } catch (e) {
       console.error('Load failed:', e);
+      // Never leave the previous view's numbers on screen under the new title.
+      setStats(null);
+      setTrades([]);
+      setPnlRecords([]);
+      setLoadError(e instanceof Error ? e.message : String(e));
     } finally {
       setLoading(false);
     }
@@ -1207,6 +1215,15 @@ function App() {
             </span>
             <button onClick={() => setRange({})} className="ml-auto text-xs text-blue-300 hover:text-white underline">
               Show all time
+            </button>
+          </div>
+        )}
+
+        {loadError && !rangeInvalid && (
+          <div className="flex items-center gap-2 mb-4 px-3 py-2 bg-red-600/10 border border-red-500/40 rounded-lg text-sm">
+            <span className="text-red-100">Could not load this view: {loadError}</span>
+            <button onClick={loadData} className="ml-auto text-xs text-red-200 hover:text-white underline">
+              Retry
             </button>
           </div>
         )}
