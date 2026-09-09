@@ -250,6 +250,11 @@ export function EditableStatsCard({ stats, title, entityType, entityId, pinnedSt
         <StatItemReadOnly label="Best Week" value={`$${formatNum(stats.best_week_pnl)}`} hint={stats.best_week ?? undefined} color="text-green-400" />
         <StatItemReadOnly label="Worst Week" value={`$${formatNum(stats.worst_week_pnl)}`} hint={stats.worst_week ?? undefined} color="text-red-400" />
       </div>
+      {stats.drawdown_baseline_missing && (
+        <div className="mt-3 text-[11px] text-amber-500/80">
+          This account has no recorded starting capital, so its equity curve dips below zero. Those troughs would read as drawdowns over 100% of the missing balance rather than of risk taken, so they are excluded; set a real initial balance for a true figure.
+        </div>
+      )}
       {stats.outlier_trade_count > 0 && (
         <div className="mt-3 text-[11px] text-gray-500">
           Best/Worst Trade exclude {stats.outlier_trade_count} trade{stats.outlier_trade_count === 1 ? '' : 's'} whose P&L is a statistical outlier against the rest of this history (typically a top-down balance edit landing on one trade); their P&L still counts in every total.

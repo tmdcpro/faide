@@ -406,6 +406,7 @@ class StatsResponse(BaseModel):
     max_drawdown_flows: float = 0.0
     max_drawdown_flows_percent: float = 0.0
     max_drawdown_flows_date: Optional[str] = None
+    drawdown_baseline_missing: bool = False
     calmar_ratio: float = 0.0
     avg_trade_pnl: float = 0.0
     best_trade: float = 0.0

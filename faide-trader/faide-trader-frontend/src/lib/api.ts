@@ -137,6 +137,7 @@ export interface Stats {
   max_drawdown_flows: number;
   max_drawdown_flows_percent: number;
   max_drawdown_flows_date: string | null;
+  drawdown_baseline_missing: boolean;
   calmar_ratio: number;
   avg_trade_pnl: number;
   best_trade: number;

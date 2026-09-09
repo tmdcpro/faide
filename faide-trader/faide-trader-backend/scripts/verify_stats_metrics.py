@@ -166,6 +166,23 @@ def test_no_outliers_in_ordinary_data() -> None:
     check("best trade", s["best_trade"], 100.0)
 
 
+def test_tiny_drawdowns_are_dropped() -> None:
+    # A $5 dip on a near-empty curve is 50% but says nothing about risk.
+    trades = [trade(0, 10.0), trade(1, -5.0), trade(2, 20.0)]
+    s = calculate_stats_from_trades(trades, 0.0)
+    check("tiny drawdown amount", s["max_drawdown"], 0.0)
+    check("tiny drawdown percent", s["max_drawdown_percent"], 0.0)
+
+
+def test_negative_equity_is_flagged_not_ranked() -> None:
+    # No recorded starting capital, so the curve goes negative.
+    trades = [trade(0, 5_000.0), trade(1, -1_000.0), trade(2, -9_000.0)]
+    s = calculate_stats_from_trades(trades, 0.0)
+    check("baseline flagged", s["drawdown_baseline_missing"], True)
+    check("drawdown stays under 100%", s["max_drawdown_percent"], 20.0)
+    check("drawdown amount from same trough", s["max_drawdown"], 1_000.0)
+
+
 def test_outlier_found_with_zero_spread() -> None:
     # Identical magnitudes leave the median absolute deviation at zero.
     trades = [trade(i % 30, 100.0 if i % 2 else -100.0) for i in range(60)]

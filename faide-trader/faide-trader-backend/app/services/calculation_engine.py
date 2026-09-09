@@ -47,6 +47,13 @@ MIN_DRAWDOWN_AMOUNT = 100.0
 At low equity a $20 dip is a huge percentage and would always win the ranking.
 """
 
+ABSOLUTE_MIN_DRAWDOWN_AMOUNT = 10.0
+"""No drawdown below this is ever reported, not even when nothing else qualifies.
+
+A few dollars of dip on a near-empty equity curve is an arbitrarily large percentage
+and says nothing about risk, so such a series reports no drawdown at all.
+"""
+
 MIN_DRAWDOWN_PEAK_FRACTION = 0.02
 """A drawdown must also be this large relative to the highest equity ever reached.
 
@@ -114,11 +121,23 @@ def _worst_drawdown(
 
     `min_amount` is raised to `MIN_DRAWDOWN_PEAK_FRACTION` of the highest equity the
     series reaches, so the ranking is not won by an early dip that was only large in
-    percentage terms because the account was tiny at the time.
+    percentage terms because the account was tiny at the time. Dips below
+    `ABSOLUTE_MIN_DRAWDOWN_AMOUNT` are discarded outright.
+
+    Equity below zero means the account's real starting capital was never recorded,
+    which yields percentages above 100 that describe the missing balance rather than
+    risk. Those troughs are skipped and reported through `baseline_missing`.
     """
     peak = initial_balance
-    best = {"amount": 0.0, "percent": 0.0, "date": None, "peak": initial_balance}
+    best = {
+        "amount": 0.0,
+        "percent": 0.0,
+        "date": None,
+        "peak": initial_balance,
+        "baseline_missing": False,
+    }
     fallback = dict(best)
+    baseline_missing = False
     high_water = max([equity for _, equity in series] + [initial_balance])
     floor = max(min_amount, high_water * MIN_DRAWDOWN_PEAK_FRACTION)
 
@@ -127,12 +146,18 @@ def _worst_drawdown(
         amount = peak - equity
         if amount <= 0 or peak <= 0:
             continue
+        if amount < ABSOLUTE_MIN_DRAWDOWN_AMOUNT:
+            continue
+        if equity < 0:
+            baseline_missing = True
+            continue
         percent = amount / peak * 100
         point = {
             "amount": round(amount, 2),
             "percent": round(percent, 2),
             "date": ts.strftime("%Y-%m-%d") if hasattr(ts, "strftime") else str(ts)[:10],
             "peak": round(peak, 2),
+            "baseline_missing": False,
         }
         if amount >= floor:
             if percent > best["percent"]:
@@ -140,7 +165,9 @@ def _worst_drawdown(
         elif amount > fallback["amount"]:
             fallback = point
 
-    return best if best["amount"] > 0 else fallback
+    worst = best if best["amount"] > 0 else fallback
+    worst["baseline_missing"] = baseline_missing
+    return worst
 
 
 def _period_extremes(trades: list[Trade], key: str) -> dict:
@@ -205,6 +232,7 @@ def calculate_stats_from_trades(
             "max_drawdown_flows": 0.0,
             "max_drawdown_flows_percent": 0.0,
             "max_drawdown_flows_date": None,
+            "drawdown_baseline_missing": False,
             "calmar_ratio": 0.0,
             "avg_trade_pnl": 0.0,
             "best_trade": 0.0,
@@ -339,6 +367,7 @@ def calculate_stats_from_trades(
         "max_drawdown_flows": dd_flows["amount"],
         "max_drawdown_flows_percent": dd_flows["percent"],
         "max_drawdown_flows_date": dd_flows["date"],
+        "drawdown_baseline_missing": dd["baseline_missing"] or dd_flows["baseline_missing"],
         "calmar_ratio": round(calmar_ratio, 4),
         "avg_trade_pnl": round(avg_trade_pnl, 2),
         "best_trade": round(best_trade, 2),
