@@ -7,6 +7,7 @@ import {
   type Trade,
   type Stats,
   type PnlRecord,
+  type DateRange,
 } from '@/lib/api';
 import { EditableStatsCard } from '@/components/EditableStatsCard';
 import { TradeTable } from '@/components/TradeTable';
@@ -22,6 +23,8 @@ import { EditBotDialog } from '@/components/EditBotDialog';
 import { SymbolPnlView } from '@/components/SymbolPnlView';
 import { TransactionsView } from '@/components/TransactionsView';
 import { EquityChart } from '@/components/EquityChart';
+import { DateRangePicker, periodLabel } from '@/components/DateRangePicker';
+import { RangeRegenerateDialog } from '@/components/RangeRegenerateDialog';
 import { exportPortfolioReport } from '@/lib/exportReport';
 import {
   ChevronRight,
@@ -38,6 +41,7 @@ import {
   Lock,
   Unlock,
   Pencil,
+  Calendar,
 } from 'lucide-react';
 
 type View =
@@ -59,15 +63,31 @@ function App() {
   const [showMarketImport, setShowMarketImport] = useState(false);
   const [showGenerateTrades, setShowGenerateTrades] = useState(false);
   const [showRegenerate, setShowRegenerate] = useState<false | 'bot' | 'account' | 'portfolio'>(false);
+  const [showRangeRegenerate, setShowRangeRegenerate] = useState<false | 'bot' | 'account' | 'portfolio'>(false);
+  const [range, setRange] = useState<DateRange>({});
+  const [refreshKey, setRefreshKey] = useState(0);
   const [showEdit, setShowEdit] = useState<null | 'portfolio' | 'account' | 'bot'>(null);
   const [regenerating, setRegenerating] = useState(false);
   const [currentPortfolio, setCurrentPortfolio] = useState<Portfolio | null>(null);
   const [currentAccount, setCurrentAccount] = useState<Account | null>(null);
   const [currentBot, setCurrentBot] = useState<Bot | null>(null);
 
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  const rangeInvalid = Boolean(
+    range.start && range.end && new Date(range.start) > new Date(range.end)
+  );
+
   // Load data based on current view
   const loadData = useCallback(async () => {
+    if (rangeInvalid) {
+      setStats(null);
+      setTrades([]);
+      setPnlRecords([]);
+      return;
+    }
     setLoading(true);
+    setLoadError(null);
     try {
       if (view.type === 'portfolios') {
         const data = await api.listPortfolios();
@@ -75,12 +95,12 @@ function App() {
       } else if (view.type === 'portfolio') {
         const [portfolio, accts] = await Promise.all([
           api.getPortfolio(view.portfolioId),
-          api.listAccounts(view.portfolioId),
+          api.listAccounts(view.portfolioId, range),
         ]);
         setCurrentPortfolio(portfolio);
         setAccounts(accts);
         if (accts.length > 0) {
-          const s = await api.getPortfolioStats(view.portfolioId);
+          const s = await api.getPortfolioStats(view.portfolioId, range);
           setStats(s);
         } else {
           setStats(null);
@@ -88,8 +108,8 @@ function App() {
       } else if (view.type === 'account') {
         const [account, botList, s] = await Promise.all([
           api.getAccount(view.accountId),
-          api.listBots(view.accountId),
-          api.getAccountStats(view.accountId),
+          api.listBots(view.accountId, range),
+          api.getAccountStats(view.accountId, range),
         ]);
         setCurrentAccount(account);
         setBots(botList);
@@ -97,9 +117,9 @@ function App() {
       } else if (view.type === 'bot') {
         const [bot, tradeList, s, pnl] = await Promise.all([
           api.getBot(view.botId),
-          api.listTrades(view.botId),
-          api.getBotStats(view.botId),
-          api.getPnlRecords(view.botId),
+          api.listTrades(view.botId, range),
+          api.getBotStats(view.botId, range),
+          api.getPnlRecords(view.botId, undefined, range),
         ]);
         setCurrentBot(bot);
         setTrades(tradeList);
@@ -108,10 +128,15 @@ function App() {
       }
     } catch (e) {
       console.error('Load failed:', e);
+      // Never leave the previous view's numbers on screen under the new title.
+      setStats(null);
+      setTrades([]);
+      setPnlRecords([]);
+      setLoadError(e instanceof Error ? e.message : String(e));
     } finally {
       setLoading(false);
     }
-  }, [view]);
+  }, [view, range, rangeInvalid]);
 
   useEffect(() => {
     loadData();
@@ -273,6 +298,13 @@ function App() {
             <Download size={16} /> Export Report
           </button>
           <button
+            onClick={() => setShowRangeRegenerate('portfolio')}
+            className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-500 rounded-lg text-sm font-medium transition-colors"
+            title="Generate or regenerate data only inside the selected period"
+          >
+            <Calendar size={16} /> Period Data
+          </button>
+          <button
             onClick={() => setShowRegenerate('portfolio')}
             className="flex items-center gap-2 px-4 py-2 bg-purple-600 hover:bg-purple-500 rounded-lg text-sm font-medium transition-colors"
             title="Regenerate all bot trades across all accounts while respecting locked values"
@@ -311,17 +343,17 @@ function App() {
             onRecalculated={loadData}
           />
           <div className="mt-4">
-            <EquityChart entityType="portfolio" entityId={view.portfolioId} />
+            <EquityChart key={refreshKey} entityType="portfolio" entityId={view.portfolioId} range={range} />
           </div>
           <div className="mt-4">
-            <PeriodPnlView entityType="portfolio" entityId={view.portfolioId} onRecalculated={loadData} />
+            <PeriodPnlView key={refreshKey} entityType="portfolio" entityId={view.portfolioId} range={range} onRecalculated={loadData} />
           </div>
         </>
       )}
 
       {view.type === 'portfolio' && (
         <div className="mt-4">
-          <TransactionsView portfolioId={view.portfolioId} />
+          <TransactionsView key={refreshKey} portfolioId={view.portfolioId} range={range} />
         </div>
       )}
 
@@ -594,6 +626,13 @@ function App() {
               <RefreshCw size={16} />
             </button>
             <button
+              onClick={() => setShowRangeRegenerate('account')}
+              className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-500 rounded-lg text-sm font-medium transition-colors"
+              title="Generate or regenerate data only inside the selected period"
+            >
+              <Calendar size={16} /> Period Data
+            </button>
+            <button
               onClick={() => setShowRegenerate('account')}
               className="flex items-center gap-2 px-4 py-2 bg-purple-600 hover:bg-purple-500 rounded-lg text-sm font-medium transition-colors"
               title="Regenerate all bot trades in this account while respecting locked values"
@@ -632,16 +671,16 @@ function App() {
               onRecalculated={loadData}
             />
             <div className="mt-4">
-              <EquityChart entityType="account" entityId={view.accountId} />
+              <EquityChart key={refreshKey} entityType="account" entityId={view.accountId} range={range} />
             </div>
             <div className="mt-4">
-              <PeriodPnlView entityType="account" entityId={view.accountId} onRecalculated={loadData} />
+              <PeriodPnlView key={refreshKey} entityType="account" entityId={view.accountId} range={range} onRecalculated={loadData} />
             </div>
           </>
         )}
 
         <div className="mt-4">
-          <TransactionsView accountId={view.accountId} onChanged={loadData} />
+          <TransactionsView key={refreshKey} accountId={view.accountId} range={range} onChanged={loadData} />
         </div>
 
         <div className="mt-6">
@@ -915,6 +954,13 @@ function App() {
               <RefreshCw size={16} />
             </button>
             <button
+              onClick={() => setShowRangeRegenerate('bot')}
+              className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-500 rounded-lg text-sm font-medium transition-colors"
+              title="Generate or regenerate data only inside the selected period"
+            >
+              <Calendar size={16} /> Period Data
+            </button>
+            <button
               onClick={() => setShowRegenerate('bot')}
               className="flex items-center gap-2 px-4 py-2 bg-purple-600 hover:bg-purple-500 rounded-lg text-sm font-medium transition-colors"
               title="Regenerate trades while keeping locked stat values fixed"
@@ -965,14 +1011,14 @@ function App() {
         {/* Per-Symbol P&L Breakdown */}
         {stats && stats.total_trades > 0 && (
           <div className="mb-4">
-            <SymbolPnlView botId={view.botId} onRefresh={loadData} />
+            <SymbolPnlView key={refreshKey} botId={view.botId} range={range} onRefresh={loadData} />
           </div>
         )}
 
         {/* Period P&L Breakdown */}
         {stats && stats.total_trades > 0 && (
           <div className="mb-4">
-            <PeriodPnlView entityType="bot" entityId={view.botId} onRecalculated={loadData} />
+            <PeriodPnlView key={refreshKey} entityType="bot" entityId={view.botId} range={range} onRecalculated={loadData} />
           </div>
         )}
 
@@ -1129,6 +1175,7 @@ function App() {
             <span className="text-xs text-gray-500 bg-slate-700 px-2 py-0.5 rounded">Simulator</span>
           </div>
           <div className="flex items-center gap-4 text-sm text-gray-400">
+            <DateRangePicker value={range} onChange={setRange} />
             <button
               onClick={() => setShowMarketImport(true)}
               className="flex items-center gap-1 hover:text-blue-400 transition-colors"
@@ -1148,22 +1195,75 @@ function App() {
       <main className="max-w-7xl mx-auto px-6 py-6">
         {renderBreadcrumb()}
 
+        {rangeInvalid && (
+          <div className="flex items-center gap-2 mb-4 px-3 py-2 bg-red-600/10 border border-red-500/40 rounded-lg text-sm">
+            <Calendar size={14} className="text-red-300" />
+            <span className="text-red-100">
+              Invalid period: <span className="font-medium">{periodLabel(range)}</span> starts after it ends. Fix the From/To dates to see data.
+            </span>
+            <button onClick={() => setRange({})} className="ml-auto text-xs text-red-200 hover:text-white underline">
+              Show all time
+            </button>
+          </div>
+        )}
+
+        {!rangeInvalid && (range.start || range.end) && (
+          <div className="flex items-center gap-2 mb-4 px-3 py-2 bg-blue-600/10 border border-blue-500/40 rounded-lg text-sm">
+            <Calendar size={14} className="text-blue-300" />
+            <span className="text-blue-100">
+              Showing <span className="font-medium">{periodLabel(range)}</span> — stats, tables, P&amp;L and charts are limited to this period.
+            </span>
+            <button onClick={() => setRange({})} className="ml-auto text-xs text-blue-300 hover:text-white underline">
+              Show all time
+            </button>
+          </div>
+        )}
+
+        {loadError && !rangeInvalid && (
+          <div className="flex items-center gap-2 mb-4 px-3 py-2 bg-red-600/10 border border-red-500/40 rounded-lg text-sm">
+            <span className="text-red-100">Could not load this view: {loadError}</span>
+            <button onClick={loadData} className="ml-auto text-xs text-red-200 hover:text-white underline">
+              Retry
+            </button>
+          </div>
+        )}
+
         {loading && (
           <div className="flex items-center justify-center py-4">
             <RefreshCw size={20} className="animate-spin text-blue-400" />
           </div>
         )}
 
-        {view.type === 'portfolios' && renderPortfolios()}
-        {view.type === 'portfolio' && renderPortfolioDetail()}
-        {view.type === 'account' && renderAccountDetail()}
-        {view.type === 'bot' && renderBotDetail()}
+        {!rangeInvalid && view.type === 'portfolios' && renderPortfolios()}
+        {!rangeInvalid && view.type === 'portfolio' && renderPortfolioDetail()}
+        {!rangeInvalid && view.type === 'account' && renderAccountDetail()}
+        {!rangeInvalid && view.type === 'bot' && renderBotDetail()}
       </main>
 
       {showMarketImport && (
         <MarketDataImportDialog
           onClose={() => setShowMarketImport(false)}
           onImported={loadData}
+        />
+      )}
+
+      {showRangeRegenerate && view.type !== 'portfolios' && (
+        <RangeRegenerateDialog
+          entityType={showRangeRegenerate}
+          entityId={
+            showRangeRegenerate === 'bot' && view.type === 'bot'
+              ? view.botId
+              : showRangeRegenerate === 'account' && (view.type === 'account' || view.type === 'bot')
+                ? view.accountId
+                : view.portfolioId
+          }
+          range={range}
+          onRangeChange={setRange}
+          onClose={() => setShowRangeRegenerate(false)}
+          onDone={() => {
+            setRefreshKey((k) => k + 1);
+            loadData();
+          }}
         />
       )}
     </div>

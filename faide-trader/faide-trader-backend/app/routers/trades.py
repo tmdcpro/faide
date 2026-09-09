@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
@@ -12,13 +13,20 @@ from app.services.calculation_engine import (
     recalculate_bot_from_trades,
     recalculate_account,
 )
+from app.services.date_range import filter_trades, parse_range
 from app.services.trade_generator import generate_trades_for_bot
 
 router = APIRouter(prefix="/api", tags=["trades"])
 
 
 @router.get("/bots/{bot_id}/trades", response_model=list[TradeResponse])
-async def list_trades(bot_id: int, db: AsyncSession = Depends(get_db)):
+async def list_trades(
+    bot_id: int,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    db: AsyncSession = Depends(get_db),
+):
+    start, end = parse_range(start_date, end_date)
     bot = await db.get(Bot, bot_id)
     if not bot:
         raise HTTPException(status_code=404, detail="Bot not found")
@@ -26,7 +34,7 @@ async def list_trades(bot_id: int, db: AsyncSession = Depends(get_db)):
     result = await db.execute(
         select(Trade).where(Trade.bot_id == bot_id).order_by(Trade.entry_time.desc())
     )
-    return list(result.scalars().all())
+    return filter_trades(list(result.scalars().all()), start, end)
 
 
 @router.post("/bots/{bot_id}/trades", response_model=TradeResponse)

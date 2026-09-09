@@ -1,6 +1,6 @@
 from datetime import datetime
 from typing import Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 # --- Portfolio ---
@@ -228,6 +228,34 @@ class RegenerateResponse(BaseModel):
     final_stats: dict = {}
 
 
+# --- Date-range scoped regeneration ---
+class RangeRegenerateRequest(BaseModel):
+    start_date: str  # ISO date or datetime, inclusive
+    end_date: str  # ISO date or datetime, inclusive (bare date = whole day)
+    target_net_pnl: Optional[float] = None
+    trades_per_day: Optional[float] = Field(default=None, gt=0, le=200)
+    zero_activity_dates: list[str] = Field(default=[], max_length=3660)
+    seed: Optional[int] = None
+    regenerate_transactions: bool = False
+    deposit_total: Optional[float] = Field(default=None, ge=0)
+    withdrawal_total: Optional[float] = Field(default=None, ge=0)
+    transaction_count: int = Field(default=2, ge=1, le=500)
+
+
+class RangeRegenerateResponse(BaseModel):
+    start_date: str
+    end_date: str
+    deleted_trades: int
+    generated_trades: int
+    deleted_transactions: int
+    generated_transactions: int
+    net_pnl: float
+    bots_regenerated: int
+    bots_skipped_locked: int
+    preserved_rows: int
+    zero_activity_days: list[str] = []
+
+
 # --- Market Data ---
 class MarketDataImport(BaseModel):
     exchange: str
@@ -362,6 +390,7 @@ class TransactionResponse(BaseModel):
 # --- Stats ---
 class StatsResponse(BaseModel):
     total_pnl: float = 0.0
+    gross_pnl: float = 0.0
     total_trades: int = 0
     win_count: int = 0
     loss_count: int = 0
@@ -373,14 +402,37 @@ class StatsResponse(BaseModel):
     sortino_ratio: float = 0.0
     max_drawdown: float = 0.0
     max_drawdown_percent: float = 0.0
+    max_drawdown_date: Optional[str] = None
+    max_drawdown_flows: float = 0.0
+    max_drawdown_flows_percent: float = 0.0
+    max_drawdown_flows_date: Optional[str] = None
+    drawdown_baseline_missing: bool = False
     calmar_ratio: float = 0.0
     avg_trade_pnl: float = 0.0
     best_trade: float = 0.0
     worst_trade: float = 0.0
+    best_trade_raw: float = 0.0
+    worst_trade_raw: float = 0.0
+    outlier_trade_count: int = 0
+    best_day_pnl: float = 0.0
+    best_day: Optional[str] = None
+    worst_day_pnl: float = 0.0
+    worst_day: Optional[str] = None
+    best_week_pnl: float = 0.0
+    best_week: Optional[str] = None
+    worst_week_pnl: float = 0.0
+    worst_week: Optional[str] = None
     total_fees: float = 0.0
     net_pnl: float = 0.0
+    gross_pnl_with_flows: float = 0.0
+    net_pnl_with_flows: float = 0.0
+    total_deposits: float = 0.0
+    total_withdrawals: float = 0.0
+    net_flows: float = 0.0
+    trading_balance: float = 0.0
     current_balance: float = 0.0
     roi_percent: float = 0.0
+    roi_on_initial_percent: float = 0.0
 
 
 # --- Equity Curve ---

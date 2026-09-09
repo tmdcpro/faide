@@ -1,23 +1,26 @@
 import { useState, useEffect } from 'react';
-import { api, type SymbolPnl } from '@/lib/api';
+import { api, type DateRange, type SymbolPnl } from '@/lib/api';
 import { TrendingUp, TrendingDown } from 'lucide-react';
 
 interface SymbolPnlViewProps {
   botId: number;
+  range?: DateRange;
   onRefresh?: () => void;
 }
 
-export function SymbolPnlView({ botId }: SymbolPnlViewProps) {
+export function SymbolPnlView({ botId, range }: SymbolPnlViewProps) {
+  const startDate = range?.start;
+  const endDate = range?.end;
   const [symbolPnls, setSymbolPnls] = useState<SymbolPnl[]>([]);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     setLoading(true);
-    api.getSymbolPnl(botId)
+    api.getSymbolPnl(botId, { start: startDate, end: endDate })
       .then(setSymbolPnls)
       .catch(console.error)
       .finally(() => setLoading(false));
-  }, [botId]);
+  }, [botId, startDate, endDate]);
 
   if (loading) {
     return (
