@@ -95,7 +95,7 @@ function App() {
       } else if (view.type === 'portfolio') {
         const [portfolio, accts] = await Promise.all([
           api.getPortfolio(view.portfolioId),
-          api.listAccounts(view.portfolioId),
+          api.listAccounts(view.portfolioId, range),
         ]);
         setCurrentPortfolio(portfolio);
         setAccounts(accts);
@@ -108,7 +108,7 @@ function App() {
       } else if (view.type === 'account') {
         const [account, botList, s] = await Promise.all([
           api.getAccount(view.accountId),
-          api.listBots(view.accountId),
+          api.listBots(view.accountId, range),
           api.getAccountStats(view.accountId, range),
         ]);
         setCurrentAccount(account);

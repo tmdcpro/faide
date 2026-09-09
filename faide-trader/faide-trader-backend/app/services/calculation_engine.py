@@ -70,6 +70,14 @@ counts in every total.
 OUTLIER_MIN_TRADES = 20
 """Below this many trades the spread is too noisy to call anything an outlier."""
 
+OUTLIER_ZERO_SPREAD_MULTIPLE = 40.0
+"""Multiple of the common magnitude used when the median absolute deviation is zero.
+
+More than half the trades sharing one |P&L| leaves MAD at zero, which would disable
+the test entirely and let an imposed extreme value win the ranking. Scaling the
+common magnitude keeps identical trades eligible while still catching that value.
+"""
+
 
 def trade_time(trade: Trade) -> datetime:
     """When a trade's P&L is realised."""
@@ -79,8 +87,8 @@ def trade_time(trade: Trade) -> datetime:
 def _outlier_pnl_threshold(pnls: list[float]) -> float:
     """|P&L| above which a trade is an outlier for best/worst ranking.
 
-    Returns infinity when there is too little data, or when the spread is zero, to
-    keep every trade eligible.
+    Returns infinity when there is too little data, or when no magnitude can be
+    called extreme, so every trade stays eligible.
     """
     if len(pnls) < OUTLIER_MIN_TRADES:
         return float("inf")
@@ -88,7 +96,9 @@ def _outlier_pnl_threshold(pnls: list[float]) -> float:
     median = statistics.median(magnitudes)
     mad = statistics.median([abs(m - median) for m in magnitudes])
     if mad <= 0:
-        return float("inf")
+        if median <= 0:
+            return float("inf")
+        return median * OUTLIER_ZERO_SPREAD_MULTIPLE
     return median + OUTLIER_MAD_MULTIPLE * mad * 1.4826
 
 

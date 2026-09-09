@@ -513,9 +513,15 @@ async def regenerate_range(
     db: AsyncSession,
     bots: list[Bot],
     opts: RangeRegenerateOptions,
+    account_ids: Optional[set[int]] = None,
 ) -> dict:
-    """Replace in-range activity for ``bots``, leaving everything else untouched."""
-    if not bots:
+    """Replace in-range activity for ``bots``, leaving everything else untouched.
+
+    ``account_ids`` is the account scope the caller selected. Transactions hang off
+    accounts rather than bots, so an account with no bots -- or only locked ones --
+    still has its in-range transactions replaced.
+    """
+    if not bots and not account_ids:
         return {
             "deleted_trades": 0,
             "generated_trades": 0,
@@ -547,10 +553,12 @@ async def regenerate_range(
     open_bots = [b for b in bots if not b.is_pinned]
     skipped = len(bots) - len(open_bots)
     # Transactions belong to the selected accounts, so they are still replaced
-    # when every bot under them is locked.
-    account_ids = {b.account_id for b in bots}
+    # when every bot under them is locked, or when an account has no bots at all.
+    account_ids = set(account_ids or set()) | {b.account_id for b in bots}
 
-    # ── delete in-range, unpinned, fully-contained trades ──────────────
+    # ── delete in-range, closed, unpinned, fully-contained trades ──────
+    # An open position has no exit yet, so it is not "inside" any window and is
+    # never replaced by generated closed trades.
     activity = func.coalesce(Trade.exit_time, Trade.entry_time)
     doomed = list(
         (
@@ -559,7 +567,8 @@ async def regenerate_range(
                     Trade.bot_id.in_([b.id for b in open_bots]),
                     Trade.is_pinned == False,  # noqa: E712
                     Trade.entry_time >= start,
-                    activity <= end,
+                    Trade.exit_time.is_not(None),
+                    Trade.exit_time <= end,
                 )
             )
         )

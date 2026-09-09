@@ -166,6 +166,21 @@ def test_no_outliers_in_ordinary_data() -> None:
     check("best trade", s["best_trade"], 100.0)
 
 
+def test_outlier_found_with_zero_spread() -> None:
+    # Identical magnitudes leave the median absolute deviation at zero.
+    trades = [trade(i % 30, 100.0 if i % 2 else -100.0) for i in range(60)]
+    trades.append(trade(29, 50_000.0))
+    s = calculate_stats_from_trades(trades, 1000.0)
+    check("zero-spread outlier count", s["outlier_trade_count"], 1)
+    check("zero-spread best trade", s["best_trade"], 100.0)
+
+
+def test_identical_trades_flag_nothing() -> None:
+    trades = [trade(i % 30, 100.0 if i % 2 else -100.0) for i in range(60)]
+    s = calculate_stats_from_trades(trades, 1000.0)
+    check("identical trades outliers", s["outlier_trade_count"], 0)
+
+
 def test_small_sample_flags_nothing() -> None:
     trades = [trade(0, 10.0), trade(1, 9_000.0)]
     s = calculate_stats_from_trades(trades, 1000.0)

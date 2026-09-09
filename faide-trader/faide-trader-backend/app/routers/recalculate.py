@@ -1612,6 +1612,7 @@ async def _run_range_regeneration(
     db: AsyncSession,
     bots: list[Bot],
     data: RangeRegenerateRequest,
+    account_ids: Optional[set[int]] = None,
 ) -> RangeRegenerateResponse:
     start, end = parse_range(data.start_date, data.end_date)
     if start is None or end is None:
@@ -1636,7 +1637,7 @@ async def _run_range_regeneration(
     )
 
     try:
-        result = await regenerate_range(db, bots, opts)
+        result = await regenerate_range(db, bots, opts, account_ids)
     except RangeRegenerationError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
 
@@ -1682,7 +1683,7 @@ async def regenerate_account_range(
         raise HTTPException(status_code=400, detail="Account is frozen")
 
     bots = list((await db.execute(select(Bot).where(Bot.account_id == account_id))).scalars().all())
-    return await _run_range_regeneration(db, bots, data)
+    return await _run_range_regeneration(db, bots, data, {account_id})
 
 
 @router.post("/portfolios/{portfolio_id}/regenerate-range", response_model=RangeRegenerateResponse)
@@ -1701,10 +1702,12 @@ async def regenerate_portfolio_range(
         raise HTTPException(status_code=404, detail="Portfolio has no accounts")
 
     bots: list[Bot] = []
+    selected_accounts: set[int] = set()
     for account in accounts:
         if account.is_pinned:
             continue
+        selected_accounts.add(account.id)
         bots.extend(
             (await db.execute(select(Bot).where(Bot.account_id == account.id))).scalars().all()
         )
-    return await _run_range_regeneration(db, bots, data)
+    return await _run_range_regeneration(db, bots, data, selected_accounts)

@@ -69,6 +69,62 @@ async def run_case(db_path: str, start: datetime, end: datetime, **opts) -> dict
     return result
 
 
+async def run_scope_case(db_path: str, start: datetime, end: datetime, account_id: int) -> dict:
+    """Regenerate transactions for an account scope that has no unlocked bots."""
+    os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{db_path}"
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    from app.services.range_regenerate import RangeRegenerateOptions, regenerate_range
+
+    engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}")
+    session_maker = async_sessionmaker(engine, expire_on_commit=False)
+    async with session_maker() as db:
+        result = await regenerate_range(
+            db,
+            [],
+            RangeRegenerateOptions(
+                start=start,
+                end=end,
+                regenerate_transactions=True,
+                deposit_total=500.0,
+                transaction_count=2,
+            ),
+            {account_id},
+        )
+    await engine.dispose()
+    return result
+
+
+def seed_open_trade(db_path: str, when: datetime) -> int:
+    """Add an open (no exit) trade inside the window and return its id."""
+    conn = sqlite3.connect(db_path)
+    bot_id = conn.execute("SELECT id FROM bots WHERE is_pinned = 0 LIMIT 1").fetchone()[0]
+    cur = conn.execute(
+        "INSERT INTO trades (bot_id, symbol, direction, status, entry_price, quantity,"
+        " leverage, pnl, pnl_percent, fee, entry_time, is_pinned)"
+        " VALUES (?, 'BTC/USDT', 'long', 'open', 100.0, 1.0, 1.0, 0.0, 0.0, 0.0, ?, 0)",
+        (bot_id, when.isoformat(sep=" ")),
+    )
+    conn.commit()
+    trade_id = cur.lastrowid
+    conn.close()
+    return trade_id
+
+
+def seed_botless_account(db_path: str) -> int:
+    conn = sqlite3.connect(db_path)
+    portfolio_id = conn.execute("SELECT id FROM portfolios LIMIT 1").fetchone()[0]
+    cur = conn.execute(
+        "INSERT INTO accounts (portfolio_id, name, exchange, initial_balance,"
+        " current_balance, is_pinned) VALUES (?, 'Botless', 'binance', 0, 0, 0)",
+        (portfolio_id,),
+    )
+    conn.commit()
+    account_id = cur.lastrowid
+    conn.close()
+    return account_id
+
+
 async def main() -> int:
     if not os.path.exists(SOURCE_DB):
         print("no local database found, nothing to verify")
@@ -108,6 +164,42 @@ async def main() -> int:
                 f"trades, {len(before[0])} trades + {len(before[1])} transactions "
                 f"+ {len(before[2])} P&L records preserved byte-identical"
             )
+
+    start, end = datetime(2026, 6, 1), datetime(2026, 6, 7, 23, 59, 59)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        db_path = os.path.join(tmp, "copy.db")
+        shutil.copy(SOURCE_DB, db_path)
+        trade_id = seed_open_trade(db_path, datetime(2026, 6, 3, 12, 0))
+        await run_case(db_path, start, end, seed=11)
+        conn = sqlite3.connect(db_path)
+        survived = conn.execute(
+            "SELECT exit_time FROM trades WHERE id = ?", (trade_id,)
+        ).fetchone()
+        conn.close()
+        if survived is None or survived[0] is not None:
+            print("FAIL open trade inside the window was replaced")
+            failures += 1
+        else:
+            print("PASS open trade inside the window kept its open status")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        db_path = os.path.join(tmp, "copy.db")
+        shutil.copy(SOURCE_DB, db_path)
+        account_id = seed_botless_account(db_path)
+        result = await run_scope_case(db_path, start, end, account_id)
+        conn = sqlite3.connect(db_path)
+        generated = conn.execute(
+            "SELECT COUNT(*), COALESCE(SUM(amount), 0) FROM transactions"
+            " WHERE account_id = ? AND type = 'deposit'",
+            (account_id,),
+        ).fetchone()
+        conn.close()
+        if result["generated_transactions"] != 2 or generated != (2, 500.0):
+            print(f"FAIL botless account got no transactions: {result} {generated}")
+            failures += 1
+        else:
+            print("PASS botless account regenerated transactions in the window")
 
     return 1 if failures else 0
 

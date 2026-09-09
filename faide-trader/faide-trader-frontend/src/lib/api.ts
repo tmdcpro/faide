@@ -319,8 +319,8 @@ export const api = {
     request<{ status: string }>(`/api/portfolios/${id}`, { method: 'DELETE' }),
 
   // Accounts
-  listAccounts: (portfolioId: number) =>
-    request<Account[]>(`/api/portfolios/${portfolioId}/accounts`),
+  listAccounts: (portfolioId: number, range?: DateRange) =>
+    request<Account[]>(`/api/portfolios/${portfolioId}/accounts${qs(rangeParams(range))}`),
   createAccount: (portfolioId: number, data: { name: string; exchange: string; initial_balance?: number }) =>
     request<Account>(`/api/portfolios/${portfolioId}/accounts`, { method: 'POST', body: JSON.stringify(data) }),
   getAccount: (id: number) => request<Account>(`/api/accounts/${id}`),
@@ -330,7 +330,8 @@ export const api = {
     request<{ status: string }>(`/api/accounts/${id}`, { method: 'DELETE' }),
 
   // Bots
-  listBots: (accountId: number) => request<Bot[]>(`/api/accounts/${accountId}/bots`),
+  listBots: (accountId: number, range?: DateRange) =>
+    request<Bot[]>(`/api/accounts/${accountId}/bots${qs(rangeParams(range))}`),
   createBot: (accountId: number, data: { name: string; strategy_type?: string; symbol?: string; symbols?: string[] }) =>
     request<Bot>(`/api/accounts/${accountId}/bots`, { method: 'POST', body: JSON.stringify(data) }),
   getBot: (id: number) => request<Bot>(`/api/bots/${id}`),

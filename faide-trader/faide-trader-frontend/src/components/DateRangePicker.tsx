@@ -20,7 +20,8 @@ function toLocalDate(d: Date): string {
 }
 
 function formatDisplay(value: string): string {
-  const d = new Date(value);
+  // A bare date parses as UTC midnight, which renders as the previous day west of UTC.
+  const d = new Date(value.length === 10 ? `${value}T00:00:00` : value);
   if (Number.isNaN(d.getTime())) return value;
   const hasTime = value.length > 10 && !value.endsWith('T00:00');
   return d.toLocaleString('en-US', {
