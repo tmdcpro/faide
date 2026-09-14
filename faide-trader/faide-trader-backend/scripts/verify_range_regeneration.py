@@ -95,6 +95,33 @@ async def run_scope_case(db_path: str, start: datetime, end: datetime, account_i
     return result
 
 
+async def record_transaction(db_path: str, account_id: int, amount: float) -> float:
+    """Record a withdrawal the way the transactions router does."""
+    os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{db_path}"
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    from app.models.portfolio import Transaction
+    from app.services.calculation_engine import update_account_balance
+
+    engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}")
+    session_maker = async_sessionmaker(engine, expire_on_commit=False)
+    async with session_maker() as db:
+        db.add(
+            Transaction(
+                account_id=account_id,
+                type="withdrawal",
+                amount=amount,
+                note="verification",
+                date=datetime(2026, 9, 13, 23, 0),
+            )
+        )
+        await db.flush()
+        balance = await update_account_balance(db, account_id)
+        await db.commit()
+    await engine.dispose()
+    return balance
+
+
 def seed_open_trade(db_path: str, when: datetime) -> int:
     """Add an open (no exit) trade inside the window and return its id."""
     conn = sqlite3.connect(db_path)
@@ -200,6 +227,49 @@ async def main() -> int:
             failures += 1
         else:
             print("PASS botless account regenerated transactions in the window")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        db_path = os.path.join(tmp, "copy.db")
+        shutil.copy(SOURCE_DB, db_path)
+        conn = sqlite3.connect(db_path)
+        account_id, initial = conn.execute(
+            "SELECT id, initial_balance FROM accounts ORDER BY id LIMIT 1"
+        ).fetchone()
+        before_trades = conn.execute(
+            "SELECT id, pnl, pnl_percent FROM trades ORDER BY id"
+        ).fetchall()
+        conn.close()
+
+        balance = await record_transaction(db_path, account_id, 100.0)
+
+        conn = sqlite3.connect(db_path)
+        after_trades = conn.execute(
+            "SELECT id, pnl, pnl_percent FROM trades ORDER BY id"
+        ).fetchall()
+        pnl, deposits, withdrawals = conn.execute(
+            "SELECT (SELECT COALESCE(SUM(t.pnl), 0) FROM trades t JOIN bots b"
+            "        ON t.bot_id = b.id WHERE b.account_id = ?),"
+            "       (SELECT COALESCE(SUM(amount), 0) FROM transactions"
+            "        WHERE account_id = ? AND type = 'deposit'),"
+            "       (SELECT COALESCE(SUM(amount), 0) FROM transactions"
+            "        WHERE account_id = ? AND type = 'withdrawal')",
+            (account_id, account_id, account_id),
+        ).fetchone()
+        conn.close()
+
+        expected = round(initial + pnl + deposits - withdrawals, 2)
+        if before_trades != after_trades:
+            changed = sum(1 for a, b in zip(before_trades, after_trades) if a != b)
+            print(f"FAIL recording a transaction rewrote {changed} trades' P&L")
+            failures += 1
+        elif abs(balance - expected) > 0.01:
+            print(f"FAIL balance after transaction {balance} != {expected}")
+            failures += 1
+        else:
+            print(
+                f"PASS recording a transaction left all {len(before_trades)} trades' "
+                f"P&L untouched and set balance to {balance}"
+            )
 
     return 1 if failures else 0
 

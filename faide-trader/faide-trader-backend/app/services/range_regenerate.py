@@ -28,6 +28,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.portfolio import Account, Bot, MarketData, PnlRecord, Trade, Transaction
+from app.services.calculation_engine import update_account_balance
 
 MAX_RANGE_DAYS = 3660
 
@@ -485,28 +486,7 @@ async def _update_account_balance(db: AsyncSession, account: Account) -> None:
     Deliberately does not re-derive individual trade P&L, so historical trades
     are read-only here.
     """
-    pnl = (
-        await db.execute(
-            select(func.coalesce(func.sum(Trade.pnl), 0.0))
-            .join(Bot, Trade.bot_id == Bot.id)
-            .where(Bot.account_id == account.id)
-        )
-    ).scalar() or 0.0
-    deposits = (
-        await db.execute(
-            select(func.coalesce(func.sum(Transaction.amount), 0.0)).where(
-                Transaction.account_id == account.id, Transaction.type == "deposit"
-            )
-        )
-    ).scalar() or 0.0
-    withdrawals = (
-        await db.execute(
-            select(func.coalesce(func.sum(Transaction.amount), 0.0)).where(
-                Transaction.account_id == account.id, Transaction.type == "withdrawal"
-            )
-        )
-    ).scalar() or 0.0
-    account.current_balance = round(account.initial_balance + pnl + deposits - withdrawals, 2)
+    await update_account_balance(db, account.id)
 
 
 async def regenerate_range(

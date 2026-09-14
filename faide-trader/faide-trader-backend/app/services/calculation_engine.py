@@ -508,6 +508,44 @@ async def rebuild_pnl_records(db: AsyncSession, bot_id: int, trades: list[Trade]
     await db.flush()
 
 
+async def update_account_balance(db: AsyncSession, account_id: int) -> float:
+    """Recompute an account's balance from stored trade P&L and its transactions.
+
+    Trade P&L is read, never re-derived, so deposits and withdrawals cannot rewrite
+    trading history: a stored P&L that came from a target or a top-down edit no
+    longer matches what entry/exit prices alone imply, and must survive.
+    """
+    account = await db.get(Account, account_id)
+    if not account:
+        return 0.0
+
+    pnl = (
+        await db.execute(
+            select(func.coalesce(func.sum(Trade.pnl), 0.0))
+            .join(Bot, Trade.bot_id == Bot.id)
+            .where(Bot.account_id == account_id)
+        )
+    ).scalar() or 0.0
+    deposits = (
+        await db.execute(
+            select(func.coalesce(func.sum(Transaction.amount), 0.0)).where(
+                Transaction.account_id == account_id, Transaction.type == "deposit"
+            )
+        )
+    ).scalar() or 0.0
+    withdrawals = (
+        await db.execute(
+            select(func.coalesce(func.sum(Transaction.amount), 0.0)).where(
+                Transaction.account_id == account_id, Transaction.type == "withdrawal"
+            )
+        )
+    ).scalar() or 0.0
+
+    account.current_balance = round(account.initial_balance + pnl + deposits - withdrawals, 2)
+    await db.flush()
+    return account.current_balance
+
+
 async def recalculate_account(db: AsyncSession, account_id: int) -> dict:
     """Recalculate account-level stats from all its bots. Pinned bots are not recalculated."""
     account = await db.get(Account, account_id)
