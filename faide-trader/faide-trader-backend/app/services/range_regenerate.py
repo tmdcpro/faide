@@ -80,6 +80,9 @@ class RangeRegenerateOptions:
     deposit_total: Optional[float] = None
     withdrawal_total: Optional[float] = None
     transaction_count: int = 2
+    # Bots outside the regeneration scope (e.g. under a frozen account) whose
+    # in-range P&L still counts towards ``target_net_pnl``. Never modified.
+    counted_bot_ids: set[int] = field(default_factory=set)
 
 
 def _fingerprint(rows: list[tuple]) -> str:
@@ -610,12 +613,14 @@ async def regenerate_range(
     # ── generate replacement trades ────────────────────────────────────
     # The target is the period's total, so P&L from in-range trades that were
     # preserved (pinned or straddling a boundary) counts towards it.
-    # Locked bots keep their in-range trades, so their P&L counts too.
+    # Locked bots keep their in-range trades, so their P&L counts too, as do
+    # bots under a frozen account, which are out of scope but still in the period.
+    counted_bot_ids = {b.id for b in bots} | set(opts.counted_bot_ids)
     preserved_pnl = float(
         (
             await db.execute(
                 select(func.coalesce(func.sum(Trade.pnl), 0.0)).where(
-                    Trade.bot_id.in_([b.id for b in bots]),
+                    Trade.bot_id.in_(counted_bot_ids),
                     activity >= start,
                     activity <= end,
                 )

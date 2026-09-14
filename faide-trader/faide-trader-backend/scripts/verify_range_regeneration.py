@@ -95,6 +95,39 @@ async def run_scope_case(db_path: str, start: datetime, end: datetime, account_i
     return result
 
 
+async def run_frozen_account_case(
+    db_path: str, start: datetime, end: datetime, frozen_account_id: int, target: float
+) -> dict:
+    """Regenerate a portfolio period while one account is frozen."""
+    os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{db_path}"
+    from sqlalchemy import select
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    from app.models.portfolio import Bot
+    from app.services.range_regenerate import RangeRegenerateOptions, regenerate_range
+
+    engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}")
+    session_maker = async_sessionmaker(engine, expire_on_commit=False)
+    async with session_maker() as db:
+        all_bots = list((await db.execute(select(Bot))).scalars().all())
+        scoped = [b for b in all_bots if b.account_id != frozen_account_id]
+        frozen = {b.id for b in all_bots if b.account_id == frozen_account_id}
+        result = await regenerate_range(
+            db,
+            scoped,
+            RangeRegenerateOptions(
+                start=start,
+                end=end,
+                target_net_pnl=target,
+                seed=5,
+                counted_bot_ids=frozen,
+            ),
+            {b.account_id for b in scoped},
+        )
+    await engine.dispose()
+    return result
+
+
 async def record_transaction(db_path: str, account_id: int, amount: float) -> float:
     """Record a withdrawal the way the transactions router does."""
     os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{db_path}"
@@ -227,6 +260,46 @@ async def main() -> int:
             failures += 1
         else:
             print("PASS botless account regenerated transactions in the window")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        db_path = os.path.join(tmp, "copy.db")
+        shutil.copy(SOURCE_DB, db_path)
+        conn = sqlite3.connect(db_path)
+        frozen_id = conn.execute("SELECT id FROM accounts ORDER BY id LIMIT 1").fetchone()[0]
+        conn.execute("UPDATE accounts SET is_pinned = 1 WHERE id = ?", (frozen_id,))
+        conn.commit()
+        frozen_before = conn.execute(
+            "SELECT t.id, t.pnl FROM trades t JOIN bots b ON t.bot_id = b.id"
+            " WHERE b.account_id = ? ORDER BY t.id",
+            (frozen_id,),
+        ).fetchall()
+        conn.close()
+
+        target = 750.0
+        result = await run_frozen_account_case(db_path, start, end, frozen_id, target)
+
+        conn = sqlite3.connect(db_path)
+        frozen_after = conn.execute(
+            "SELECT t.id, t.pnl FROM trades t JOIN bots b ON t.bot_id = b.id"
+            " WHERE b.account_id = ? ORDER BY t.id",
+            (frozen_id,),
+        ).fetchall()
+        conn.close()
+
+        if frozen_before != frozen_after:
+            print("FAIL frozen account's trades were modified")
+            failures += 1
+        elif abs(result["net_pnl"] - target) > 1.0:
+            print(
+                f"FAIL portfolio period P&L {result['net_pnl']} != target {target} "
+                "with a frozen account in the period"
+            )
+            failures += 1
+        else:
+            print(
+                f"PASS frozen account untouched and portfolio period P&L hit "
+                f"{result['net_pnl']} against target {target}"
+            )
 
     with tempfile.TemporaryDirectory() as tmp:
         db_path = os.path.join(tmp, "copy.db")

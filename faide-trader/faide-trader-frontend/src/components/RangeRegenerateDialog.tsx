@@ -171,6 +171,9 @@ export function RangeRegenerateDialog({
                   placeholder="random"
                   className="mt-1 w-full px-2 py-1.5 bg-slate-900 border border-slate-600 rounded text-sm text-white"
                 />
+                <span className="mt-1 block text-[11px] text-gray-500">
+                  Total for the period, including locked bots and frozen accounts.
+                </span>
               </label>
               <label className="text-xs text-gray-400">
                 Trades per day

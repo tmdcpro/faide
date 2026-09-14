@@ -1613,6 +1613,7 @@ async def _run_range_regeneration(
     bots: list[Bot],
     data: RangeRegenerateRequest,
     account_ids: Optional[set[int]] = None,
+    counted_bot_ids: Optional[set[int]] = None,
 ) -> RangeRegenerateResponse:
     start, end = parse_range(data.start_date, data.end_date)
     if start is None or end is None:
@@ -1634,6 +1635,7 @@ async def _run_range_regeneration(
         deposit_total=data.deposit_total,
         withdrawal_total=data.withdrawal_total,
         transaction_count=data.transaction_count,
+        counted_bot_ids=counted_bot_ids or set(),
     )
 
     try:
@@ -1702,12 +1704,17 @@ async def regenerate_portfolio_range(
         raise HTTPException(status_code=404, detail="Portfolio has no accounts")
 
     bots: list[Bot] = []
+    frozen_bot_ids: set[int] = set()
     selected_accounts: set[int] = set()
     for account in accounts:
-        if account.is_pinned:
-            continue
-        selected_accounts.add(account.id)
-        bots.extend(
+        account_bots = list(
             (await db.execute(select(Bot).where(Bot.account_id == account.id))).scalars().all()
         )
-    return await _run_range_regeneration(db, bots, data, selected_accounts)
+        if account.is_pinned:
+            # Frozen accounts are never touched, but a portfolio target means the
+            # portfolio's P&L for the period, so their in-range P&L still counts.
+            frozen_bot_ids.update(b.id for b in account_bots)
+            continue
+        selected_accounts.add(account.id)
+        bots.extend(account_bots)
+    return await _run_range_regeneration(db, bots, data, selected_accounts, frozen_bot_ids)
