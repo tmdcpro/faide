@@ -240,11 +240,62 @@ async def _history_profile(
 
     first_dt, last_dt = _as_datetime(first), _as_datetime(last)
     if not count or count < 5 or first_dt is None or last_dt is None:
-        return ActivityProfile(None, None)
+        return await _peer_profile(db, bot, start, end)
 
     span_days = max((last_dt - first_dt).total_seconds() / 86400, 1.0)
     magnitude = float(avg_abs) if avg_abs else None
     return ActivityProfile(count / span_days, magnitude)
+
+
+async def _peer_profile(
+    db: AsyncSession, bot: Bot, start: datetime, end: datetime
+) -> ActivityProfile:
+    """Average the behaviour of bots running the same strategy elsewhere.
+
+    A bot with no history of its own -- one opened on a brand new account, say --
+    would otherwise fall back to the sparse strategy defaults and generate a
+    period that looks nothing like the rest of the portfolio.
+    """
+    if not bot.strategy_type:
+        return ActivityProfile(None, None)
+
+    activity = func.coalesce(Trade.exit_time, Trade.entry_time)
+    rows = (
+        await db.execute(
+            select(
+                Trade.bot_id,
+                func.count(Trade.id),
+                func.min(activity),
+                func.max(activity),
+                func.avg(func.abs(Trade.pnl)),
+            )
+            .join(Bot, Trade.bot_id == Bot.id)
+            .where(
+                Bot.strategy_type == bot.strategy_type,
+                Bot.id != bot.id,
+                or_(activity < start, activity > end),
+            )
+            .group_by(Trade.bot_id)
+        )
+    ).all()
+
+    rates: list[float] = []
+    magnitudes: list[float] = []
+    for _, count, first, last, avg_abs in rows:
+        first_dt, last_dt = _as_datetime(first), _as_datetime(last)
+        if not count or count < 5 or first_dt is None or last_dt is None:
+            continue
+        span_days = max((last_dt - first_dt).total_seconds() / 86400, 1.0)
+        rates.append(count / span_days)
+        if avg_abs:
+            magnitudes.append(float(avg_abs))
+
+    if not rates:
+        return ActivityProfile(None, None)
+    return ActivityProfile(
+        sum(rates) / len(rates),
+        sum(magnitudes) / len(magnitudes) if magnitudes else None,
+    )
 
 
 def _active_days(start: datetime, end: datetime, zero_days: set[date]) -> list[date]:
