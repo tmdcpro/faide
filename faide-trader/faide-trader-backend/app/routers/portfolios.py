@@ -11,6 +11,18 @@ from app.services.calculation_engine import recalculate_portfolio, get_account_n
 router = APIRouter(prefix="/api/portfolios", tags=["portfolios"])
 
 
+async def _data_end(db: AsyncSession, portfolio_id: int):
+    """Timestamp of the portfolio's latest trade activity."""
+    return (
+        await db.execute(
+            select(func.max(func.coalesce(Trade.exit_time, Trade.entry_time)))
+            .join(Bot, Trade.bot_id == Bot.id)
+            .join(Account, Bot.account_id == Account.id)
+            .where(Account.portfolio_id == portfolio_id)
+        )
+    ).scalar()
+
+
 @router.get("", response_model=list[PortfolioResponse])
 async def list_portfolios(db: AsyncSession = Depends(get_db)):
     result = await db.execute(
@@ -38,6 +50,7 @@ async def list_portfolios(db: AsyncSession = Depends(get_db)):
             account_count=len(p.accounts),
             total_pnl=round(total_pnl, 2),
             total_balance=round(total_balance, 2),
+            data_end=await _data_end(db, p.id),
         ))
     return responses
 
@@ -86,6 +99,7 @@ async def get_portfolio(portfolio_id: int, db: AsyncSession = Depends(get_db)):
         account_count=len(portfolio.accounts),
         total_pnl=round(total_pnl, 2),
         total_balance=round(total_balance, 2),
+        data_end=await _data_end(db, portfolio.id),
     )
 
 

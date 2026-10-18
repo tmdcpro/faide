@@ -43,6 +43,7 @@ export interface Portfolio {
   account_count: number;
   total_pnl: number;
   total_balance: number;
+  data_end: string | null;
 }
 
 export interface Account {

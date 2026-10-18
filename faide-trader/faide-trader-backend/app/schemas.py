@@ -25,6 +25,7 @@ class PortfolioResponse(BaseModel):
     account_count: int = 0
     total_pnl: float = 0.0
     total_balance: float = 0.0
+    data_end: Optional[datetime] = None
 
     model_config = {"from_attributes": True}
 

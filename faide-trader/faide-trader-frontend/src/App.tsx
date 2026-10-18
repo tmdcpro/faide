@@ -50,6 +50,12 @@ type View =
   | { type: 'account'; accountId: number; portfolioId: number }
   | { type: 'bot'; botId: number; accountId: number; portfolioId: number };
 
+function describePortfolio(p: Portfolio): string {
+  if (!p.data_end) return p.description;
+  const end = new Date(p.data_end).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  return p.description.replace(/\bpresent\b/i, end);
+}
+
 function App() {
   const [view, setView] = useState<View>({ type: 'portfolios' });
   const [portfolios, setPortfolios] = useState<Portfolio[]>([]);
@@ -224,7 +230,7 @@ function App() {
               <div className="flex items-center justify-between">
                 <div>
                   <h3 className="font-semibold text-lg">{p.name}</h3>
-                  <p className="text-sm text-gray-400">{p.description || 'No description'}</p>
+                  <p className="text-sm text-gray-400">{describePortfolio(p) || 'No description'}</p>
                 </div>
                 <div className="text-right">
                   <div className={`text-lg font-mono font-bold ${p.total_pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
@@ -270,7 +276,7 @@ function App() {
           </button>
           <div>
             <h1 className="text-2xl font-bold">{currentPortfolio?.name}</h1>
-            <p className="text-sm text-gray-400">{currentPortfolio?.description}</p>
+            <p className="text-sm text-gray-400">{currentPortfolio && describePortfolio(currentPortfolio)}</p>
           </div>
           <button
             onClick={() => setShowEdit('portfolio')}
