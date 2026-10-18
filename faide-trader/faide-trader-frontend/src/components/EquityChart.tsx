@@ -11,7 +11,7 @@ import {
   ResponsiveContainer,
   ReferenceDot,
 } from 'recharts';
-import { api, type EquityCurvePoint } from '@/lib/api';
+import { api, type DateRange, type EquityCurvePoint, type Stats } from '@/lib/api';
 import {
   TrendingUp,
   Eye,
@@ -21,6 +21,7 @@ import {
 interface EquityChartProps {
   entityType: 'account' | 'portfolio';
   entityId: number;
+  range?: DateRange;
 }
 
 interface ToggleState {
@@ -42,10 +43,17 @@ function formatDate(dateStr: string): string {
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' });
 }
 
-function CustomTooltip({ active, payload }: { active?: boolean; payload?: Array<{ dataKey: string; value: number; color: string }> }) {
+interface TooltipEntry {
+  dataKey: string;
+  value: number;
+  color: string;
+  payload?: EquityCurvePoint & { _dateFormatted: string };
+}
+
+function CustomTooltip({ active, payload }: { active?: boolean; payload?: TooltipEntry[] }) {
   if (!active || !payload || payload.length === 0) return null;
 
-  const point = payload[0]?.payload as EquityCurvePoint & { _dateFormatted: string };
+  const point = payload[0]?.payload;
   if (!point) return null;
 
   return (
@@ -126,8 +134,11 @@ const TOGGLE_BUTTONS: { key: keyof ToggleState; label: string; color: string }[]
   { key: 'peakBalance', label: 'Peak', color: '#94a3b8' },
 ];
 
-export function EquityChart({ entityType, entityId }: EquityChartProps) {
+export function EquityChart({ entityType, entityId, range }: EquityChartProps) {
+  const startDate = range?.start;
+  const endDate = range?.end;
   const [data, setData] = useState<EquityCurvePoint[]>([]);
+  const [stats, setStats] = useState<Stats | null>(null);
   const [loading, setLoading] = useState(false);
   const [toggles, setToggles] = useState<ToggleState>({
     balance: true,
@@ -142,16 +153,24 @@ export function EquityChart({ entityType, entityId }: EquityChartProps) {
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
+      const selected = { start: startDate, end: endDate };
       const curve = entityType === 'account'
-        ? await api.getAccountEquityCurve(entityId)
-        : await api.getPortfolioEquityCurve(entityId);
+        ? await api.getAccountEquityCurve(entityId, selected)
+        : await api.getPortfolioEquityCurve(entityId, selected);
       setData(curve);
+      // The headline drawdown comes from the stats endpoint so the chart and the
+      // statistics card can never disagree; the curve here is only daily, while the
+      // stats walk every trade.
+      const s = entityType === 'account'
+        ? await api.getAccountStats(entityId, selected)
+        : await api.getPortfolioStats(entityId, selected);
+      setStats(s);
     } catch (e) {
       console.error('Failed to load equity curve:', e);
     } finally {
       setLoading(false);
     }
-  }, [entityType, entityId]);
+  }, [entityType, entityId, startDate, endDate]);
 
   useEffect(() => {
     loadData();
@@ -188,8 +207,14 @@ export function EquityChart({ entityType, entityId }: EquityChartProps) {
   // Compute summary stats
   const lastPoint = data[data.length - 1];
   const firstPoint = data[0];
-  const maxDrawdown = Math.max(...data.map((d) => d.drawdown));
-  const maxDrawdownPct = Math.max(...data.map((d) => d.drawdown_percent));
+  // This curve moves with deposits and withdrawals, so pair it with the drawdown
+  // measured the same way. Fall back to the daily points if stats are unavailable.
+  const worstDrawdownDay = data.reduce(
+    (worst, d) => (d.drawdown_percent > worst.drawdown_percent ? d : worst),
+  );
+  const maxDrawdown = stats ? stats.max_drawdown_flows : worstDrawdownDay.drawdown;
+  const maxDrawdownPct = stats ? stats.max_drawdown_flows_percent : worstDrawdownDay.drawdown_percent;
+  const maxDrawdownDate = stats?.max_drawdown_flows_date ?? worstDrawdownDay.date;
   const totalDeposits = data.reduce((sum, d) => sum + d.deposits, 0);
   const totalWithdrawals = data.reduce((sum, d) => sum + d.withdrawals, 0);
   const depositDays = data.filter((d) => d.deposits > 0);
@@ -214,8 +239,8 @@ export function EquityChart({ entityType, entityId }: EquityChartProps) {
               {formatCurrency(lastPoint.cumulative_pnl)}
             </span>
           </div>
-          <div className="text-gray-400">
-            Max DD: <span className="text-red-400 font-mono">{formatCurrency(maxDrawdown)} ({maxDrawdownPct.toFixed(1)}%)</span>
+          <div className="text-gray-400" title="Deepest drawdown per trade, with deposits and withdrawals included">
+            Max DD: <span className="text-red-400 font-mono">{maxDrawdownPct.toFixed(1)}% ({formatCurrency(maxDrawdown)})</span>
           </div>
         </div>
       </div>
@@ -409,9 +434,9 @@ export function EquityChart({ entityType, entityId }: EquityChartProps) {
           </div>
         </div>
         <div className="bg-slate-700/50 rounded-lg p-2">
-          <div className="text-gray-500 mb-0.5">Max Drawdown</div>
+          <div className="text-gray-500 mb-0.5">Max Drawdown (w/ flows)</div>
           <div className="text-red-400 font-mono font-medium">
-            {formatCurrency(maxDrawdown)} <span className="text-gray-500">({maxDrawdownPct.toFixed(1)}%)</span>
+            {maxDrawdownPct.toFixed(1)}% <span className="text-gray-500">({formatCurrency(maxDrawdown)} on {maxDrawdownDate})</span>
           </div>
         </div>
         <div className="bg-slate-700/50 rounded-lg p-2">

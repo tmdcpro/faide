@@ -1,3 +1,5 @@
+from typing import Optional
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -7,6 +9,7 @@ from app.database import get_db
 from app.models.portfolio import Bot, Account, Trade
 from app.schemas import BotCreate, BotUpdate, BotResponse, SymbolPnlResponse
 from app.services.calculation_engine import calculate_stats_from_trades
+from app.services.date_range import balance_at, filter_trades, parse_range
 
 router = APIRouter(prefix="/api", tags=["bots"])
 
@@ -38,10 +41,17 @@ def build_bot_response(bot: Bot, trades: list[Trade], initial_balance: float) ->
 
 
 @router.get("/accounts/{account_id}/bots", response_model=list[BotResponse])
-async def list_bots(account_id: int, db: AsyncSession = Depends(get_db)):
+async def list_bots(
+    account_id: int,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    db: AsyncSession = Depends(get_db),
+):
     account = await db.get(Account, account_id)
     if not account:
         raise HTTPException(status_code=404, detail="Account not found")
+
+    start, end = parse_range(start_date, end_date)
 
     result = await db.execute(
         select(Bot)
@@ -50,8 +60,11 @@ async def list_bots(account_id: int, db: AsyncSession = Depends(get_db)):
     )
     bots = result.scalars().all()
 
+    # Percentages inside a window are relative to the equity the window opened with.
+    baseline = await balance_at(db, [account_id], account.initial_balance, start)
+
     return [
-        build_bot_response(b, list(b.trades), account.initial_balance)
+        build_bot_response(b, filter_trades(list(b.trades), start, end), baseline)
         for b in bots
     ]
 
@@ -147,8 +160,14 @@ async def update_bot(
 
 
 @router.get("/bots/{bot_id}/symbol-pnl", response_model=list[SymbolPnlResponse])
-async def get_symbol_pnl(bot_id: int, db: AsyncSession = Depends(get_db)):
+async def get_symbol_pnl(
+    bot_id: int,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    db: AsyncSession = Depends(get_db),
+):
     """Get per-symbol P&L breakdown for a bot."""
+    start, end = parse_range(start_date, end_date)
     result = await db.execute(
         select(Bot).where(Bot.id == bot_id).options(selectinload(Bot.trades))
     )
@@ -158,7 +177,7 @@ async def get_symbol_pnl(bot_id: int, db: AsyncSession = Depends(get_db)):
 
     # Group trades by symbol
     symbol_trades: dict[str, list[Trade]] = {}
-    for trade in bot.trades:
+    for trade in filter_trades(list(bot.trades), start, end):
         symbol_trades.setdefault(trade.symbol, []).append(trade)
 
     # Build per-symbol stats

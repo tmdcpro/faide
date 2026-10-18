@@ -1,3 +1,5 @@
+from typing import Optional
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -7,15 +9,23 @@ from app.database import get_db
 from app.models.portfolio import Account, Bot, Trade, Portfolio, Transaction
 from app.schemas import AccountCreate, AccountUpdate, AccountResponse
 from app.services.calculation_engine import recalculate_account, get_account_net_deposits
+from app.services.date_range import filter_trades, parse_range
 
 router = APIRouter(prefix="/api", tags=["accounts"])
 
 
 @router.get("/portfolios/{portfolio_id}/accounts", response_model=list[AccountResponse])
-async def list_accounts(portfolio_id: int, db: AsyncSession = Depends(get_db)):
+async def list_accounts(
+    portfolio_id: int,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    db: AsyncSession = Depends(get_db),
+):
     portfolio = await db.get(Portfolio, portfolio_id)
     if not portfolio:
         raise HTTPException(status_code=404, detail="Portfolio not found")
+
+    start, end = parse_range(start_date, end_date)
 
     result = await db.execute(
         select(Account)
@@ -26,10 +36,15 @@ async def list_accounts(portfolio_id: int, db: AsyncSession = Depends(get_db)):
 
     responses = []
     for a in accounts:
-        net_deps = await get_account_net_deposits(db, a.id)
-        total_pnl = a.current_balance - a.initial_balance - net_deps
-        total_trades = sum(len(b.trades) for b in a.bots)
-        total_wins = sum(1 for b in a.bots for t in b.trades if t.pnl > 0)
+        trades = filter_trades([t for b in a.bots for t in b.trades], start, end)
+        if start is None and end is None:
+            net_deps = await get_account_net_deposits(db, a.id)
+            total_pnl = a.current_balance - a.initial_balance - net_deps
+        else:
+            # Inside a window the balance says nothing about the window's own P&L.
+            total_pnl = sum(t.pnl for t in trades)
+        total_trades = len(trades)
+        total_wins = sum(1 for t in trades if t.pnl > 0)
         win_rate = (total_wins / total_trades * 100) if total_trades > 0 else 0.0
 
         responses.append(AccountResponse(

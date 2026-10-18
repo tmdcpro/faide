@@ -2,6 +2,8 @@ import os
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
 
+from app.seed import restore_seed_db
+
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./faide_trader.db")
 
 engine = create_async_engine(DATABASE_URL, echo=False)
@@ -18,6 +20,8 @@ async def get_db():
 
 
 async def init_db():
+    restore_seed_db(DATABASE_URL)
+
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 

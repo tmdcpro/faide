@@ -1,3 +1,4 @@
+import { describePortfolio } from './describePortfolio';
 import { api, type Portfolio, type Account, type Stats, type PeriodPnl, type EquityCurvePoint, type Transaction } from './api';
 
 interface AccountData {
@@ -57,7 +58,7 @@ function pnlColor(v: number): string {
 
 function renderStatsGrid(stats: Stats): string {
   const items: [string, string, string?][] = [
-    ['Total P&L', fmtCurrency(stats.total_pnl), pnlColor(stats.total_pnl)],
+    ['Gross P&L (before fees)', fmtCurrency(stats.total_pnl), pnlColor(stats.total_pnl)],
     ['ROI', `${fmt(stats.roi_percent)}%`],
     ['Win Rate', `${fmt(stats.win_rate)}%`],
     ['Trades', `${stats.total_trades}`],
@@ -65,8 +66,8 @@ function renderStatsGrid(stats: Stats): string {
     ['Losses', `${stats.loss_count}`],
     ['Sharpe', `${fmt(stats.sharpe_ratio, 4)}`],
     ['Sortino', `${fmt(stats.sortino_ratio, 4)}`],
-    ['Max DD $', fmtCurrency(stats.max_drawdown)],
-    ['Max DD %', `${fmt(stats.max_drawdown_percent)}%`],
+    ['Max DD % (trading)', `${fmt(stats.max_drawdown_percent)}% (${fmtCurrency(stats.max_drawdown)})`],
+    ['Max DD % (w/ flows)', `${fmt(stats.max_drawdown_flows_percent)}% (${fmtCurrency(stats.max_drawdown_flows)})`],
     ['Profit Factor', `${fmt(stats.profit_factor)}`],
     ['Avg Win', fmtCurrency(stats.avg_win)],
     ['Avg Loss', fmtCurrency(stats.avg_loss)],
@@ -75,8 +76,16 @@ function renderStatsGrid(stats: Stats): string {
     ['Avg Trade', fmtCurrency(stats.avg_trade_pnl)],
     ['Total Fees', fmtCurrency(stats.total_fees)],
     ['Net P&L', fmtCurrency(stats.net_pnl), pnlColor(stats.net_pnl)],
+    ['Net P&L + flows', fmtCurrency(stats.net_pnl_with_flows), pnlColor(stats.net_pnl_with_flows)],
+    ['Deposits', fmtCurrency(stats.total_deposits)],
+    ['Withdrawals', fmtCurrency(stats.total_withdrawals)],
+    ['Best Day', `${fmtCurrency(stats.best_day_pnl)}${stats.best_day ? ` (${stats.best_day})` : ''}`],
+    ['Worst Day', `${fmtCurrency(stats.worst_day_pnl)}${stats.worst_day ? ` (${stats.worst_day})` : ''}`],
+    ['Best Week', `${fmtCurrency(stats.best_week_pnl)}${stats.best_week ? ` (${stats.best_week})` : ''}`],
+    ['Worst Week', `${fmtCurrency(stats.worst_week_pnl)}${stats.worst_week ? ` (${stats.worst_week})` : ''}`],
     ['Calmar', `${fmt(stats.calmar_ratio, 4)}`],
     ['Balance', fmtCurrency(stats.current_balance)],
+    ['Balance (trading only)', fmtCurrency(stats.trading_balance)],
   ];
 
   return `<div class="stats-grid">${items.map(([label, val, color]) =>
@@ -224,7 +233,7 @@ function generateHTML(data: ExportData): string {
 <body>
 <div class="header">
   <h1>${data.portfolio.name}</h1>
-  <p>${data.portfolio.description || ''}</p>
+  <p>${describePortfolio(data.portfolio)}</p>
   <p class="muted">${data.accounts.length} account${data.accounts.length !== 1 ? 's' : ''} · Balance: ${fmtCurrency(data.portfolio.total_balance)} · P&L: <span style="color:${pnlColor(data.portfolio.total_pnl)}">${fmtCurrency(data.portfolio.total_pnl)}</span></p>
   <p class="generated">Report generated: ${now}</p>
 </div>
