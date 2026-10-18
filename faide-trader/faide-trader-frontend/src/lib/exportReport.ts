@@ -1,3 +1,4 @@
+import { describePortfolio } from './describePortfolio';
 import { api, type Portfolio, type Account, type Stats, type PeriodPnl, type EquityCurvePoint, type Transaction } from './api';
 
 interface AccountData {
@@ -232,7 +233,7 @@ function generateHTML(data: ExportData): string {
 <body>
 <div class="header">
   <h1>${data.portfolio.name}</h1>
-  <p>${data.portfolio.description || ''}</p>
+  <p>${describePortfolio(data.portfolio)}</p>
   <p class="muted">${data.accounts.length} account${data.accounts.length !== 1 ? 's' : ''} · Balance: ${fmtCurrency(data.portfolio.total_balance)} · P&L: <span style="color:${pnlColor(data.portfolio.total_pnl)}">${fmtCurrency(data.portfolio.total_pnl)}</span></p>
   <p class="generated">Report generated: ${now}</p>
 </div>
